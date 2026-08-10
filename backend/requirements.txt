@@ -1,0 +1,19 @@
+# --- שלב 1: MVP ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-dotenv==1.0.1
+
+google-cloud-firestore==2.19.0
+google-api-python-client==2.144.0
+google-auth==2.34.0
+google-auth-oauthlib==1.2.1
+
+google-genai==1.15.0
+
+# --- שלב 2: זיהוי דוברים (pyannote.audio) ---
+# מותקן בנפרד כי הוא כבד (torch) - יופעל כשנגיע לשלב 2
+# torch
+# pyannote.audio==3.3.2

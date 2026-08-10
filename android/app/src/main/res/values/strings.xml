@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Meeting Log</string>
+    <string name="app_tagline">הקלטה, תמלול וסיכום חכם בלחיצה אחת</string>
+    <string name="start_recording">התחל הקלטה</string>
+    <string name="stop_recording">עצור הקלטה</string>
+    <string name="upload_recording">שלח לעיבוד</string>
+    <string name="title_hint">כותרת הפגישה (אופציונלי)</string>
+    <string name="status_idle">מוכן להקלטה</string>
+    <string name="status_recording">מקליט...</string>
+    <string name="status_uploading">מעלה ומעבד...</string>
+    <string name="status_done">נשלח לעיבוד. הסיכום יופיע בדרייב בקרוב.</string>
+
+    <string name="link_transcript">תמלול</string>
+    <string name="link_summary">סיכום</string>
+    <string name="link_todo">TO DO</string>
+    <string name="link_audio">הקלטה</string>
+
+    <string name="history_title">ההקלטות שלי</string>
+    <string name="history_search_hint">חיפוש לפי כותרת, דובר או הערה</string>
+    <string name="history_search_clear">נקה חיפוש</string>
+    <string name="history_date_range">תאריכים</string>
+    <string name="history_clear_filters">נקה סינון</string>
+    <string name="history_empty">עדיין אין הקלטות שהושלמו</string>
+    <string name="history_empty_filtered">לא נמצאו הקלטות התואמות את הסינון</string>
+    <string name="history_open_in_drive">פתח בדרייב</string>
+    <string name="history_toggle_theme">החלף מצב בהיר/כהה</string>
+    <string name="attach_file">📎 צרף קובץ</string>
+    <string name="attach_uploading">מעלה קובץ...</string>
+    <string name="attach_success">הקובץ עולה ומעובד ברקע</string>
+    <string name="attach_error">שגיאה בהעלאת הקובץ</string>
+    <string name="history_item_menu">אפשרויות</string>
+    <string name="history_open_folder">פתח תיקייה בדרייב</string>
+    <string name="history_edit_title">ערוך כותרת</string>
+    <string name="history_edit_speakers">ערוך דוברים</string>
+    <string name="history_edit_note">הערה</string>
+    <string name="history_delete">מחק הקלטה</string>
+    <string name="history_delete_confirm">למחוק את \"%1$s\"? התיקייה תועבר לאשפה בדרייב וניתן יהיה לשחזר אותה משם.</string>
+    <string name="history_delete_success">ההקלטה נמחקה</string>
+    <string name="history_save">שמור</string>
+    <string name="history_edit_error">שגיאה בשמירת השינוי, נסו שוב</string>
+    <string name="history_no_speakers">אין דוברים לעריכה בהקלטה זו</string>
+    <string name="history_results_count">נמצאו %1$d הקלטות</string>
+    <string name="history_status_ready">מוכן</string>
+    <string name="history_status_processing">בעיבוד</string>
+    <string name="history_sort_cd">מיון</string>
+    <string name="history_sort_newest">החדשות קודם</string>
+    <string name="history_sort_oldest">הישנות קודם</string>
+    <string name="history_sort_title_az">לפי כותרת (א-ת)</string>
+
+    <string name="chat_title">שאלות על הקלטות</string>
+    <string name="chat_pick_recordings">בחרו הקלטה אחת או יותר לשאול עליהן</string>
+    <string name="chat_input_hint">שאלו כל דבר על ההקלטות שבחרתם...</string>
+    <string name="chat_send">שלח</string>
+    <string name="chat_no_selection">בחרו לפחות הקלטה אחת לפני ששואלים</string>
+    <string name="chat_error">שגיאה בקבלת תשובה, נסו שוב</string>
+    <string name="chat_voice_input">שאלה בקול</string>
+    <string name="chat_voice_unavailable">זיהוי דיבור אינו זמין במכשיר זה</string>
+    <string name="chat_voice_permission_needed">נדרשת הרשאת מיקרופון כדי לשאול בקול</string>
+
+    <string name="share_receive_title">התקבלה הקלטת שיחה</string>
+    <string name="share_receive_subtitle">שלחו אותה לעיבוד ב-Meeting Log כדי לקבל תמלול, סיכום ורשימת TO DO</string>
+    <string name="share_default_title">שיחת טלפון %1$s</string>
+    <string name="share_cancel">ביטול</string>
+    <string name="share_copy_error">שגיאה בטעינת הקובץ, נסו שוב</string>
+</resources>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- רקע -->
+    <color name="bg_top">#0B0F1E</color>
+    <color name="bg_bottom">#141B33</color>
+
+    <!-- כרטיסים / משטחים -->
+    <color name="surface">#1B2340</color>
+    <color name="surface_stroke">#2E3A63</color>
+
+    <!-- טקסט -->
+    <color name="text_primary">#F5F7FF</color>
+    <color name="text_secondary">#9AA4C7</color>
+    <color name="text_hint">#6B7396</color>
+
+    <!-- אקסנטים -->
+    <color name="accent_cyan">#22D3EE</color>
+    <color name="accent_violet">#A78BFA</color>
+    <color name="accent_cyan_dim">#1596AC</color>
+
+    <!-- מצב הקלטה פעילה -->
+    <color name="record_active">#FF4D6D</color>
+    <color name="record_active_dim">#7A2634</color>
+
+    <!-- כפתור מושבת -->
+    <color name="disabled">#3A4266</color>
+</resources>

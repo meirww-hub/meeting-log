@@ -1,0 +1,14 @@
+# Python / backend
+__pycache__/
+*.pyc
+.venv/
+backend/.env
+backend/service-account.json
+backend/oauth_client.json
+
+# Android
+android/.gradle/
+android/**/build/
+android/local.properties
+*.iml
+.idea/

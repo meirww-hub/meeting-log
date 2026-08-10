@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python --version)",
+      "PowerShell(node --version)",
+      "WebSearch"
+    ]
+  }
+}
