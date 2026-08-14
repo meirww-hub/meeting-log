@@ -10,6 +10,9 @@ google-cloud-firestore==2.19.0
 google-api-python-client==2.144.0
 google-auth==2.34.0
 google-auth-oauthlib==1.2.1
+# הזרמת קובץ האודיו מ-Drive (GET /recordings/{id}/audio) פונה ל-HTTP הגולמי
+# של Drive ולא דרך googleapiclient - ראה services/drive.py:stream_file.
+requests==2.32.3
 
 google-genai==1.15.0
 

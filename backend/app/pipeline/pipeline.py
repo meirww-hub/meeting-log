@@ -2,8 +2,9 @@
 
 import datetime
 
-from app.models import MeetingResult, TranscriptSegment
+from app.models import MeetingResult, TodoItem, TranscriptSegment
 from app.pipeline.speaker_id import identify_speakers
+from app.pipeline.speakers import replace_labels, speakers_in_order
 from app.pipeline.summarize import summarize_and_extract_todos
 from app.pipeline.transcription import (
     transcribe_single_channel,
@@ -14,7 +15,11 @@ from app.services import firestore_store
 
 
 def process_recording(
-    recording_id: str, user_id: str, audio_path: str, title: str
+    recording_id: str,
+    user_id: str,
+    audio_path: str,
+    title: str,
+    measured_duration_seconds: float = 0.0,
 ) -> MeetingResult:
     firestore_store.set_recording_status(recording_id, user_id, "transcribing")
     segments = transcribe_with_diarization(audio_path)
@@ -22,7 +27,14 @@ def process_recording(
     firestore_store.set_recording_status(recording_id, user_id, "identifying_speakers")
     segments = identify_speakers(segments, user_id)
 
-    return _summarize_and_save(recording_id, user_id, segments, title, audio_path)
+    return _summarize_and_save(
+        recording_id,
+        user_id,
+        segments,
+        title,
+        audio_path,
+        measured_duration_seconds=measured_duration_seconds,
+    )
 
 
 def process_call_recording(
@@ -32,6 +44,7 @@ def process_call_recording(
     downlink_path: str,
     title: str,
     contact_name: str = "",
+    measured_duration_seconds: float = 0.0,
 ) -> MeetingResult:
     """עיבוד שיחת טלפון שהוקלטה בשני ערוצים מבודדים (הצד שלי / הצד השני).
 
@@ -39,9 +52,10 @@ def process_call_recording(
     בנפרד ומתויג בוודאות, והקטעים ממוזגים חזרה לפי ציר הזמן. התוצאה מדויקת
     יותר מ-diarization רגיל, שמנחש דוברים לפי מאפייני קול.
 
-    contact_name מגיע משם איש הקשר של המספר בהיסטוריית השיחות של הטלפון
-    (ראה CallImportWorker.kt) - כשידוע, הוא מחליף את התווית הגנרית "הצד
-    השני" מייד, בלי להזדקק לזיהוי מתוך תוכן השיחה.
+    contact_name מגיע מרשימת אנשי הקשר של הטלפון, לפי מספר השיחה (ראה
+    CallImportWorker.kt) - כשידוע, הוא מחליף את התווית הגנרית "הצד השני"
+    מייד, בלי להזדקק לזיהוי מתוך תוכן השיחה, ומכאן ואילך הוא נעול: שם
+    שהמשתמש עצמו שמר באנשי הקשר מדויק יותר מכל שם שיישמע באודיו.
     """
     other_label = contact_name.strip() or "הצד השני"
 
@@ -56,21 +70,72 @@ def process_call_recording(
         segments,
         title,
         uplink_path,
-        extra_audio=[(downlink_path, "הקלטה - הצד השני.m4a")],
+        # תווית בלבד - שם הקובץ המלא נבנה ב-drive.py סביב כותרת הפגישה.
+        extra_audio=[(downlink_path, "הצד השני")],
+        locked_labels={other_label} if contact_name.strip() else set(),
+        measured_duration_seconds=measured_duration_seconds,
     )
 
 
+def _resolve_speaker_names(
+    segments: list[TranscriptSegment],
+    speaker_names: dict[str, str],
+    locked_labels: set[str],
+) -> dict[str, str]:
+    """מסנן את השמות שזוהו מתוך תוכן השיחה לכאלה שמותר להחיל בפועל.
+
+    "אני" תמיד ודאי, ותווית שהגיעה מרשימת אנשי הקשר של הטלפון נעולה גם
+    היא - שתיהן ידועות בוודאות מחוץ לאודיו, ולכן ניחוש של המודל מתוך
+    ההקלטה לא מורשה לדרוס אותן.
+    """
+    blocked = {"אני"} | locked_labels
+    present = {s.speaker_label for s in segments}
+    return {
+        label: name
+        for label, name in speaker_names.items()
+        if label in present and label not in blocked and name and name != label
+    }
+
+
 def _apply_speaker_names(
-    segments: list[TranscriptSegment], speaker_names: dict[str, str]
-) -> None:
-    """מחליף תוויות גנריות ("דובר 1", "הצד השני") בשם האמיתי שזוהה מתוך תוכן
-    השיחה עצמה (ראה summarize.py). לעולם לא נוגע ב"אני" - זה תמיד ודאי."""
+    segments: list[TranscriptSegment],
+    todos: list[TodoItem],
+    summary: str,
+    renames: dict[str, str],
+) -> str:
+    """מחיל שם אמיתי שזוהה מתוך השיחה על התמלול, על הסיכום ועל המשימות.
+
+    הסיכום מיוצר מול התמלול הגנרי, ולכן הוא מתייחס לדוברים בתוויות "דובר N"
+    ומייחס להם אמירות בשמן (ראה כלל הייחוס ב-summarize.py). בלי ההחלפה כאן
+    התמלול היה מציג "יוסי" בזמן שהסיכום ממשיך לדבר על "דובר 2" - אותו אדם
+    בשני שמות באותה הקלטה. מחזיר את הסיכום המעודכן.
+    """
     for segment in segments:
-        if segment.speaker_label == "אני":
-            continue
-        name = speaker_names.get(segment.speaker_label)
+        name = renames.get(segment.speaker_label)
         if name:
             segment.speaker_label = name
+    for todo in todos:
+        if todo.owner:
+            todo.owner = replace_labels(todo.owner, renames)
+        todo.description = replace_labels(todo.description, renames)
+    return replace_labels(summary, renames)
+
+
+def _duration_of(
+    measured_seconds: float, segments: list[TranscriptSegment]
+) -> float:
+    """אורך ההקלטה: מה שנמדד מקובץ האודיו, ורק אם אין - סוף הדיבור האחרון.
+
+    המדידה מגיעה מהאפליקציה, שממילא מודדת את הקובץ לפני ההעלאה (ראה
+    AudioDuration.kt). סוף הדיבור האחרון הוא קירוב גרוע: שיחה של 4 דקות
+    שרובה המתנה למוקד נרשמה כ-125 שניות - התג באפליקציה הראה אורך שגוי,
+    והגרוע יותר, הניקוי האוטומטי (שמוחק הקלטות קצרות) ראה אותה כקצרה
+    ועמד למחוק אותה. נשמר כגיבוי בלבד, להקלטות ישנות ולגרסאות אפליקציה
+    שלא שולחות את המדידה.
+    """
+    if measured_seconds > 0:
+        return measured_seconds
+    return max((s.end_seconds for s in segments), default=0.0)
 
 
 def _summarize_and_save(
@@ -80,6 +145,8 @@ def _summarize_and_save(
     title: str,
     audio_path: str,
     extra_audio: list[tuple[str, str]] | None = None,
+    locked_labels: set[str] | None = None,
+    measured_duration_seconds: float = 0.0,
 ) -> MeetingResult:
     """השלבים המשותפים לכל סוגי ההקלטות, מרגע שיש תמלול מתויג דוברים."""
     firestore_store.set_recording_status(recording_id, user_id, "summarizing")
@@ -87,10 +154,11 @@ def _summarize_and_save(
     suggested_title, summary, todos, speaker_names = summarize_and_extract_todos(
         segments, today_iso
     )
-    _apply_speaker_names(segments, speaker_names)
+    renames = _resolve_speaker_names(segments, speaker_names, locked_labels or set())
+    summary = _apply_speaker_names(segments, todos, summary, renames)
     final_title = title.strip() if title and title.strip() else suggested_title
-    speakers = sorted({s.speaker_label for s in segments})
-    duration_seconds = max((s.end_seconds for s in segments), default=0.0)
+    speakers = speakers_in_order(s.speaker_label for s in segments)
+    duration_seconds = _duration_of(measured_duration_seconds, segments)
 
     result = MeetingResult(
         title=final_title,
@@ -104,14 +172,19 @@ def _summarize_and_save(
 
     firestore_store.set_recording_status(recording_id, user_id, "saving_to_drive")
     links = save_meeting_to_drive(result, audio_path, extra_audio)
-    result.drive_folder_id = links["folder_id"]
+    # הכותרת עשויה לחזור ממוספרת ("... 2") אם כבר הייתה פגישה בשם הזה. היא
+    # נשמרת כאן חזרה כדי שהכותרת באפליקציה תהיה זהה לזו שעל הקבצים בדרייב -
+    # אחרת שתי הקלטות היו נראות זהות במסך ההיסטוריה.
+    result.title = links["title"]
     result.drive_folder_url = links["folder_url"]
     result.drive_transcript_url = links["transcript_url"]
     result.drive_transcript_doc_id = links["transcript_doc_id"]
     result.drive_summary_url = links["summary_url"]
     result.drive_summary_doc_id = links["summary_doc_id"]
     result.drive_todo_url = links["todo_url"]
+    result.drive_todo_file_id = links["todo_file_id"]
     result.drive_audio_url = links["audio_url"]
+    result.drive_audio_file_ids = links["audio_file_ids"]
 
     firestore_store.set_recording_status(
         recording_id,
@@ -122,13 +195,22 @@ def _summarize_and_save(
         speakers=result.speakers,
         duration_seconds=result.duration_seconds,
         summary=result.summary,
-        drive_folder_id=result.drive_folder_id,
         drive_folder_url=result.drive_folder_url,
         drive_transcript_url=result.drive_transcript_url,
+        # בלי המזהה הזה מסמך התמלול ב-Drive לא מתעדכן לעולם בעריכת שם דובר:
+        # edit.py קורא drive_transcript_doc_id, וב-65 ההקלטות הראשונות הוא
+        # פשוט לא נשמר כאן - כך שהתמלול ב-Firestore הראה "מאיר" בזמן
+        # שהמסמך ב-Drive נשאר עם "דובר 1" לתמיד.
+        drive_transcript_doc_id=result.drive_transcript_doc_id,
         drive_summary_url=result.drive_summary_url,
         drive_summary_doc_id=result.drive_summary_doc_id,
         drive_todo_url=result.drive_todo_url,
+        # מזהי הקבצים (ולא רק הקישורים) נדרשים לשינוי שם ולמחיקה: מאז
+        # שהקבצים יושבים בתיקיות לפי סוג, אין תיקייה אחת לפגישה שאפשר
+        # לשנות/למחוק במקומם. ראה pipeline/edit.py.
+        drive_todo_file_id=result.drive_todo_file_id,
         drive_audio_url=result.drive_audio_url,
+        drive_audio_file_ids=result.drive_audio_file_ids,
         attachments=[],
         # התמלול המובנה (עם timestamps) נשמר גם כאן, לא רק כטקסט שטוח
         # ב-Drive - כדי שמסך הצ'אט יוכל לצטט דקה:שנייה מדויקת. ראה

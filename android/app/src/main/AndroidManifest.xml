@@ -6,10 +6,16 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- שומר את ה-CPU ער בפגישה ארוכה עם מסך כבוי, כדי שהשחזור האוטומטי של
+         המיקרופון אחרי שיחה נכנסת ירוץ בזמן. ראה RecordingService. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- לזיהוי סיום שיחה, כדי לאסוף את ההקלטה החדשה של cally אוטומטית. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <!-- לשליפת שם איש הקשר של השיחה האחרונה, לתיוג ודאי של "הצד השני". -->
+    <!-- לשליפת מספר השיחה האחרונה, לתיוג ודאי של "הצד השני". -->
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- להצלבת המספר מול רשימת אנשי הקשר עצמה, כדי לקחת את השם המעודכן
+         כפי שהוא שמור שם - ולא את הצילום המטמוני שביומן השיחות. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- Shizuku מעניקה את ההרשאה הזו בבקשה הראשונה; בלעדיה כל קריאה נכשלת. -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 

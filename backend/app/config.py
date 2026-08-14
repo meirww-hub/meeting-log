@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     # למרות השם - כשיוצרים דרך ה-console זה נוצר עם ID פשוט "default".
     firestore_database_id: str = "default"
     gemini_api_key: str = ""
-    transcription_language: str = "he-IL"
 
     # OAuth בשם המשתמש האישי (לא Service Account) - כי חשבון Gmail אישי אין
     # לו מכסת אחסון שמישה ל-Service Account. מופק פעם אחת ע"י

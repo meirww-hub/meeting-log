@@ -53,14 +53,117 @@ def delete_recording(recording_id: str) -> None:
     usage_tracker.record("deletes")
 
 
+# --- קבצים מצורפים -----------------------------------------------------
+#
+# רשימת המצורפים היא מערך בתוך מסמך ההקלטה, ולכן כל שינוי בה הוא
+# קרא-שנה-כתוב. שלוש הפונקציות שלמטה עוטפות אותו בטרנזקציה של Firestore
+# במקום לקרוא ולכתוב בנפרד: צירוף קובץ, סיום העיבוד שלו והמחיקה שלו יכולים
+# לרוץ במקביל (המשתמש מצרף שני קבצים ומיד מוחק אחד), וכתיבה של המערך כולו
+# מתוך עותק ישן הייתה מוחקת בשקט את מה שהכתיבה השנייה הספיקה להוסיף.
+
+
+def add_attachments(recording_id: str, entries: list[dict]) -> None:
+    """מוסיף רשומות מצורף חדשות לסוף הרשימה."""
+    client = _client()
+    doc_ref = client.collection(_RECORDINGS_COLLECTION).document(recording_id)
+
+    @firestore.transactional
+    def _append(transaction) -> None:
+        snapshot = doc_ref.get(transaction=transaction)
+        current = (snapshot.to_dict() or {}).get("attachments") or []
+        transaction.update(doc_ref, {"attachments": current + entries})
+
+    _append(client.transaction())
+    usage_tracker.record("writes")
+
+
+def update_attachment(recording_id: str, attachment_id: str, **fields) -> None:
+    """מעדכן שדות ברשומת מצורף אחת, לפי attachment_id."""
+    client = _client()
+    doc_ref = client.collection(_RECORDINGS_COLLECTION).document(recording_id)
+
+    @firestore.transactional
+    def _patch(transaction) -> None:
+        snapshot = doc_ref.get(transaction=transaction)
+        attachments = (snapshot.to_dict() or {}).get("attachments") or []
+        for entry in attachments:
+            if entry.get("attachment_id") == attachment_id:
+                entry.update(fields)
+        transaction.update(doc_ref, {"attachments": attachments})
+
+    _patch(client.transaction())
+    usage_tracker.record("writes")
+
+
+def remove_attachment(recording_id: str, attachment_id: str) -> dict | None:
+    """מסיר רשומת מצורף ומחזיר אותה, כדי שהקורא יוכל למחוק את הקובץ
+    ב-Drive לפי המזהה ששמור בה. מחזיר None אם לא נמצאה."""
+    client = _client()
+    doc_ref = client.collection(_RECORDINGS_COLLECTION).document(recording_id)
+
+    @firestore.transactional
+    def _remove(transaction) -> dict | None:
+        snapshot = doc_ref.get(transaction=transaction)
+        attachments = (snapshot.to_dict() or {}).get("attachments") or []
+        removed = next(
+            (e for e in attachments if e.get("attachment_id") == attachment_id), None
+        )
+        if removed is None:
+            return None
+        transaction.update(
+            doc_ref,
+            {"attachments": [e for e in attachments if e is not removed]},
+        )
+        return removed
+
+    removed = _remove(client.transaction())
+    usage_tracker.record("writes")
+    return removed
+
+
+def update_recording_field_with(recording_id: str, field: str, updater) -> object:
+    """עדכון טרנזקציוני של שדה בודד: קורא את הערך הנוכחי, מפעיל עליו
+    updater(current) -> new_value, וכותב את התוצאה. מחזיר את הערך החדש.
+
+    נחוץ לשדות שכמה קריאות עלולות לעדכן במקביל - למשל summary, שכל מצורף
+    משלב לתוכו את התוכן שלו (ראה pipeline/attachments.py:integrate_into_summary).
+    כתיבה נאיבית של "קרא, שנה בקוד, כתוב" הייתה מאבדת בשקט את השילוב של
+    אחד המצורפים אם שניים מהם מסתיימים בו-זמנית."""
+    client = _client()
+    doc_ref = client.collection(_RECORDINGS_COLLECTION).document(recording_id)
+    result = {}
+
+    @firestore.transactional
+    def _update(transaction) -> None:
+        snapshot = doc_ref.get(transaction=transaction)
+        current = (snapshot.to_dict() or {}).get(field)
+        new_value = updater(current)
+        result["value"] = new_value
+        transaction.update(doc_ref, {field: new_value})
+
+    _update(client.transaction())
+    usage_tracker.record("writes")
+    return result["value"]
+
+
+# הסטטוסים שמופיעים בהיסטוריה: מה שהושלם, ומה שנכשל.
+#
+# **הכישלונות חייבים להיות כאן.** עד 2026-08-13 הרשימה החזירה "done" בלבד,
+# ולכן הקלטה שהעיבוד שלה נפל פשוט נעלמה מהמסך - ההתראה על הכישלון אפילו
+# הפנתה את המשתמש "לבדוק בהיסטוריה", המקום היחיד שבו היא לא הייתה. כך שיחה
+# בת 28 דקות אבדה בלי שאיש ידע שהיא בכלל הגיעה לשרת.
+_VISIBLE_STATUSES = ("done", "error")
+
+
 def list_recordings(user_id: str) -> list[dict]:
-    """כל ההקלטות שהושלמו של המשתמש, מהחדשה לישנה - לצורך היסטוריה/סינון
-    באפליקציה (ראה GET /recordings ב-main.py)."""
+    """ההקלטות שהושלמו ואלה שנכשלו, מהחדשה לישנה - לצורך היסטוריה/סינון
+    באפליקציה (ראה GET /recordings ב-main.py). הקלטה שעדיין בעיבוד לא
+    מופיעה: היא בדרך, ואין עליה עדיין מה להציג."""
     docs = (
         _client()
         .collection(_RECORDINGS_COLLECTION)
         .where("user_id", "==", user_id)
-        .where("status", "==", "done")
+        .where("status", "in", list(_VISIBLE_STATUSES))
         .stream()
     )
     recordings = []

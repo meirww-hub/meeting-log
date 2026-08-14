@@ -58,6 +58,23 @@ class ShareReceiveActivity : AppCompatActivity() {
                 finish()
                 return@launch
             }
+            // מדיניות האורך המזערי (ראה AudioDuration) נבדקת כאן ולא בלחיצה על
+            // "שלח לעיבוד", כדי שהמשתמש יידע מיד ולא אחרי שהקליד כותרת. כאן -
+            // בניגוד לייבוא האוטומטי - הסירוב גלוי, כי זו פעולה שהמשתמש יזם.
+            val tooShort = withContext(Dispatchers.IO) {
+                AudioDuration.isShorterThanMinimum(AudioDuration.seconds(file))
+            }
+            if (tooShort) {
+                file.delete()
+                Toast.makeText(
+                    this@ShareReceiveActivity,
+                    getString(R.string.share_too_short, AudioDuration.MIN_PROCESSING_MINUTES),
+                    Toast.LENGTH_LONG
+                ).show()
+                finish()
+                return@launch
+            }
+
             copiedAudioFile = file
             binding.shareUploadButton.isEnabled = true
         }
@@ -109,7 +126,13 @@ class ShareReceiveActivity : AppCompatActivity() {
             .setInputData(
                 workDataOf(
                     UploadWorker.KEY_AUDIO_PATH to audioFile.absolutePath,
-                    UploadWorker.KEY_TITLE to title
+                    UploadWorker.KEY_TITLE to title,
+                    // שם הקובץ נושא חותמת זמן ולכן ייחודי לכל שיתוף: ניסיון
+                    // העלאה חוזר של אותו שיתוף לא ייקלט פעמיים בשרת, ושיתוף
+                    // חדש של אותו קובץ עדיין מייצר הקלטה חדשה כרצון המשתמש.
+                    UploadWorker.KEY_CLIENT_UPLOAD_ID to audioFile.name,
+                    UploadWorker.KEY_DURATION_SECONDS to
+                        (AudioDuration.seconds(audioFile) ?: 0.0),
                 )
             )
             .build()

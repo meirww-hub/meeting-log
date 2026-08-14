@@ -17,6 +17,8 @@
     <color name="accent_cyan">#0E7490</color>
     <color name="accent_violet">#7C3AED</color>
     <color name="accent_cyan_dim">#7FC3D6</color>
+    <!-- הקלטה שהעיבוד שלה נכשל, במסך ההיסטוריה -->
+    <color name="accent_red">#DC2626</color>
 
     <!-- מצב הקלטה פעילה -->
     <color name="record_active">#E11D48</color>

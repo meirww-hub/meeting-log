@@ -1,28 +1,73 @@
 import shutil
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import Response, StreamingResponse
 
 from app.config import settings
 from app.models import ChatRequest, RecordingUpdateRequest
 from app.pipeline import edit as recording_edit
-from app.pipeline.attachments import process_attachment
+from app.pipeline.attachments import mime_type_for, process_attachment, retry_attachment
 from app.pipeline.chat import answer_question
 from app.pipeline.pipeline import process_call_recording, process_recording
-from app.services import firestore_store, usage_tracker
+from app.services import drive, firestore_store, usage_tracker
 
 app = FastAPI(title="Meeting Log Backend")
 
 
+# כמה פעמים לנסות את העיבוד מחדש לפני שמכריזים על כישלון. הכישלונות שנצפו
+# בפועל היו כולם חולפים (Gemini עמוס, חריגת מכסה, תמלול שנקטע), ועד היום כל
+# אחד מהם הפיל את ההקלטה סופית בניסיון אחד - בלי שאיש יזם ניסיון שני, כי
+# האפליקציה כבר מחקה את העותק המקומי ברגע שהשרת החזיר 200.
+_PIPELINE_ATTEMPTS = 3
+_PIPELINE_RETRY_DELAY_SECONDS = 20
+
+# השלבים שאחרי כישלון בהם מותר להתחיל מחדש מאפס. משלב הכתיבה ל-Drive
+# ואילך כבר נוצרו תיקייה ומסמכים, וריצה שנייה הייתה מייצרת עותק שני שלהם.
+_RESUMABLE_STATUSES = frozenset(
+    {"queued", "transcribing", "identifying_speakers", "summarizing"}
+)
+
+
 def _run_recording_pipeline(pipeline_fn, recording_id: str, user_id: str, *args) -> None:
-    """עוטף את עיבוד ההקלטה ברקע - בלי זה, חריגה (למשל Gemini עמוס) הייתה
-    משאירה את ההקלטה תקועה בסטטוס האחרון שלה לנצח, בלי שום סימן שגיאה."""
-    try:
-        pipeline_fn(recording_id, user_id, *args)
-    except Exception as e:
-        firestore_store.set_recording_status(recording_id, user_id, "error", error=str(e))
+    """מריץ את עיבוד ההקלטה ברקע, עם ניסיונות חוזרים.
+
+    בלי העטיפה הזו חריגה הייתה משאירה את ההקלטה תקועה בסטטוס האחרון שלה
+    לנצח, בלי שום סימן שגיאה. ובלי הניסיון החוזר, תקלה חולפת אחת הספיקה כדי
+    לאבד שיחה שלמה: זה מה שקרה ב-2026-08-13, כשתמלול שנקטע הפיל שיחה בת 28
+    דקות - ולא היה שום גורם שינסה שוב.
+    """
+    for attempt in range(_PIPELINE_ATTEMPTS):
+        try:
+            pipeline_fn(recording_id, user_id, *args)
+            return
+        except Exception as e:
+            record = firestore_store.get_recording(recording_id) or {}
+            reached = record.get("status", "queued")
+            last_attempt = attempt == _PIPELINE_ATTEMPTS - 1
+            # כישלון אחרי שהתחילה כתיבה ל-Drive לא נוסה שוב: הריצה הבאה
+            # הייתה יוצרת תיקייה ומסמכים כפולים.
+            if last_attempt or reached not in _RESUMABLE_STATUSES:
+                firestore_store.set_recording_status(
+                    recording_id, user_id, "error", error=str(e)
+                )
+                return
+            time.sleep(_PIPELINE_RETRY_DELAY_SECONDS)
+
+
+def recording_id_for_upload(user_id: str, client_upload_id: str) -> str:
+    """מזהה ההקלטה שנגזר ממזהה המקור שהאפליקציה שלחה.
+
+    אותו מקור (אותה שיחה, אותו קובץ פגישה) נותן תמיד את אותו recording_id,
+    ולכן העלאה חוזרת שלו נופלת על מסמך קיים ולא יוצרת רשומה שנייה. זה מה
+    שהופך את ההעלאה ל-idempotent: העלאה שהשרת קלט אבל האפליקציה לא הספיקה
+    לראות את התשובה עליה (טיימאאוט/נפילת רשת) נשלחת שוב ע"י WorkManager,
+    וללא הגזירה הזו כל ניסיון כזה היה מייצר הקלטה כפולה.
+    """
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"meetinglog:{user_id}:{client_upload_id}"))
 
 
 def require_api_key(x_api_key: str = Header(default="")) -> None:
@@ -51,6 +96,8 @@ async def upload_recording(
     title: str = Form(""),
     user_id: str = Form(...),
     contact_name: str = Form(""),
+    client_upload_id: str = Form(""),
+    duration_seconds: float = Form(0.0),
 ) -> dict:
     """העלאת הקלטה לעיבוד.
 
@@ -60,8 +107,33 @@ async def upload_recording(
     מגיעה עם `file` בלבד ועוברת diarization כרגיל. contact_name (רלוונטי רק
     לשיחות טלפון) הוא שם איש הקשר שהאפליקציה שלפה מהיסטוריית השיחות של
     הטלפון, לתיוג ודאי של הצד השני (ראה CallImportWorker.kt).
+
+    client_upload_id הוא מזהה יציב של מקור ההקלטה (מפתח השיחה אצל cally, או
+    תיקיית ה-session ושם הקובץ בהקלטת פגישה). העלאה שנייה של אותו מקור מזוהה
+    כאן ומוחזרת כמות שהיא, בלי רשומה נוספת ובלי עיבוד חוזר - ראה
+    recording_id_for_upload.
+
+    duration_seconds הוא אורך האודיו כפי שנמדד בטלפון לפני ההעלאה (ראה
+    AudioDuration.kt). בלעדיו האורך נגזר מסוף הדיבור האחרון בתמלול - קירוב
+    שמעוות כל הקלטה עם שתיקה בסופה. ראה pipeline._duration_of.
     """
-    recording_id = str(uuid.uuid4())
+    if client_upload_id:
+        recording_id = recording_id_for_upload(user_id, client_upload_id)
+        existing = firestore_store.get_recording(recording_id)
+        # הקלטה שהעיבוד שלה נכשל היא היחידה שמותר לשלוח שוב: המסמך שלה קיים,
+        # ולכן עד היום כל העלאה חוזרת נענתה ב-"duplicate" - כלומר שיחה שנפלה
+        # פעם אחת נתקעה ב-error לנצח, בלי שום דרך (לא מהאפליקציה ולא ביד)
+        # להריץ אותה מחדש. היא גם לא מופיעה בהיסטוריה, שמציגה רק "done", אז
+        # היא פשוט נעלמה. עכשיו העלאה חוזרת מפעילה את העיבוד שוב על אותו
+        # מזהה, כך שאין גם כפילות.
+        if existing is not None and existing.get("status") != "error":
+            return {
+                "recording_id": recording_id,
+                "status": existing.get("status", "queued"),
+                "duplicate": True,
+            }
+    else:
+        recording_id = str(uuid.uuid4())
 
     tmp_dir = Path(tempfile.gettempdir()) / "meetingscribe"
     tmp_dir.mkdir(exist_ok=True)
@@ -85,10 +157,17 @@ async def upload_recording(
             str(downlink_path),
             title,
             contact_name,
+            duration_seconds,
         )
     else:
         background_tasks.add_task(
-            _run_recording_pipeline, process_recording, recording_id, user_id, str(audio_path), title
+            _run_recording_pipeline,
+            process_recording,
+            recording_id,
+            user_id,
+            str(audio_path),
+            title,
+            duration_seconds,
         )
 
     return {"recording_id": recording_id, "status": "queued"}
@@ -143,11 +222,90 @@ def delete_recording(recording_id: str) -> dict:
 @app.post("/chat", dependencies=[Depends(require_api_key)])
 def chat(payload: ChatRequest) -> dict:
     """שאלה חופשית על תמלולי הקלטות עבר, עם ציטוט דקה:שנייה + שם ההקלטה."""
-    recordings = [firestore_store.get_recording(rid) for rid in payload.recording_ids]
-    recordings = [r for r in recordings if r is not None]
+    recordings = []
+    for recording_id in payload.recording_ids:
+        record = firestore_store.get_recording(recording_id)
+        if record is not None:
+            # get_recording מחזיר את גוף המסמך בלבד; בלי המזהה כאן הצ'אט לא
+            # יכול להחזיר ציטוט שאפשר לנגן ממנו (ראה pipeline/chat.py).
+            recordings.append({**record, "recording_id": recording_id})
     if not recordings:
         raise HTTPException(status_code=404, detail="no matching recordings found")
     return answer_question(recordings, payload.question)
+
+
+def _range_start(range_header: str) -> int:
+    """הבית הראשון שהתבקש בכותרת Range ("bytes=1024-"), או 0 אם אין כזו.
+
+    רק המשך הורדה מנקודה מסוימת נתמך (הצורה שהאפליקציה שולחת כשהורדה
+    נקטעה באמצע); סוף טווח מפורש נענה עד סוף הקובץ, וזה מותר לפי
+    התקן - הלקוח קורא בדיוק כמה שביקש.
+    """
+    prefix = "bytes="
+    if not range_header.startswith(prefix):
+        return 0
+    start = range_header[len(prefix) :].split("-", 1)[0].strip()
+    return int(start) if start.isdigit() else 0
+
+
+@app.get("/recordings/{recording_id}/audio", dependencies=[Depends(require_api_key)])
+def get_recording_audio(
+    recording_id: str,
+    channel: int = 0,
+    range_header: str = Header(default="", alias="Range"),
+) -> Response:
+    """מזרים את קובץ האודיו של ההקלטה לנגן שבתוך האפליקציה.
+
+    בלי המסלול הזה אפשר להגיע לאודיו רק דרך Drive בדפדפן - שם אין דרך
+    לקפוץ לדקה מסוימת, וזו כל הנקודה: מסך הצ'אט מצטט "בדקה 2:21", והמשתמש
+    רוצה לשמוע בדיוק את הרגע הזה (ראה ChatActivity.kt ו-AudioCache.kt).
+
+    התשובה נשלחת תמיד ב-chunked (בלי Content-Length): Cloud Run חותך תשובה
+    "רגילה" הגדולה מ-32MiB, וזה בדיוק הגודל של פגישה ארוכה - אותו קיר שכבר
+    בלע כאן הקלטות שלמות בכיוון ההעלאה. הגודל המלא נשלח בכותרת X-Audio-Size
+    כדי שהאפליקציה תוכל להציג התקדמות ולזהות הורדה שנקטעה.
+    """
+    recording = firestore_store.get_recording(recording_id)
+    if recording is None:
+        raise HTTPException(status_code=404, detail="recording not found")
+
+    file_ids = recording_edit.audio_file_ids(recording)
+    if channel < 0 or channel >= len(file_ids):
+        raise HTTPException(status_code=404, detail="audio channel not found")
+    file_id = file_ids[channel]
+
+    size = drive.file_size(file_id)
+    start = _range_start(range_header) if size is not None else 0
+
+    headers = {"Accept-Ranges": "bytes"}
+    if size is not None:
+        headers["X-Audio-Size"] = str(size)
+
+    status_code = 200
+    if start > 0:
+        if start >= size:
+            return Response(
+                status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"}
+            )
+        status_code = 206
+        headers["Content-Range"] = f"bytes {start}-{size - 1}/{size}"
+
+    return StreamingResponse(
+        drive.stream_file(file_id, start),
+        status_code=status_code,
+        headers=headers,
+        media_type="audio/mp4",
+    )
+
+
+# מגבלה משלנו על גודל מצורף בודד, נבדקת אחרי הכתיבה לדיסק הזמני. Cloud
+# Run כבר חוסם בקשה שלמה מעל 32MiB לפני שהקוד שלנו בכלל רץ (413 גולמי,
+# בלתי אפשרי ליירט), אבל זו לא ההגנה שרלוונטית כאן: כמה קבצים קטנים
+# יכולים להצטרף לבקשה אחת מתחת ל-32MiB, ועדיין כל אחד מהם צריך להישאר
+# בגבולות שה-API של Gemini/Drive מוכן לעבד. המגבלה כאן משאירה מרווח נוח
+# מתחת לתקרת Cloud Run, כדי שהשגיאה שהמשתמש רואה תהיה שלנו בעברית - לא
+# 413 גולמי מה-proxy.
+_MAX_ATTACHMENT_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
 @app.post("/recordings/{recording_id}/attachments", dependencies=[Depends(require_api_key)])
@@ -155,25 +313,115 @@ async def upload_attachments(
     recording_id: str,
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
-    user_id: str = Form(...),
 ) -> dict:
-    """מצרף קובץ אחד או יותר לתיקיית ההקלטה ב-Drive, מסכם כל קובץ ומוסיף
-    את התקציר לקובץ הסיכום הקיים. עיבוד מלא רץ ברקע (העלאת קבצים גדולים +
-    קריאה ל-Gemini לוקחת זמן)."""
+    """מצרף קובץ אחד או יותר להקלטה: מעלה כל קובץ ל-Drive, מסכם אותו
+    ומשלב את התקציר לתוך הסיכום הקיים לפי הקשר (ראה pipeline/attachments.py).
+
+    כל קובץ נכתב מיד לרשימת attachments עם status="processing", לפני
+    שהעיבוד ברקע בכלל התחיל - כך שהאפליקציה יכולה להציג אותו (ואת הכישלון,
+    אם קרה) בלי לחכות שהעיבוד יסתיים ובלי שהקובץ ייעלם בשקט אם השרת קרס
+    באמצע. עיבוד מלא רץ ברקע כי העלאת קבצים גדולים + קריאה ל-Gemini לוקחת
+    זמן."""
     if firestore_store.get_recording(recording_id) is None:
         raise HTTPException(status_code=404, detail="recording not found")
 
     tmp_dir = Path(tempfile.gettempdir()) / "meetingscribe_attachments"
     tmp_dir.mkdir(exist_ok=True)
 
+    entries: list[dict] = []
     saved_filenames = []
     for file in files:
-        file_path = tmp_dir / f"{uuid.uuid4()}_{file.filename}"
+        attachment_id = str(uuid.uuid4())
+        mime_type = mime_type_for(file.filename or "", file.content_type or "")
+        file_path = tmp_dir / f"{attachment_id}_{file.filename}"
         with file_path.open("wb") as out_file:
             shutil.copyfileobj(file.file, out_file)
+
+        if file_path.stat().st_size > _MAX_ATTACHMENT_UPLOAD_BYTES:
+            file_path.unlink(missing_ok=True)
+            entries.append(
+                {
+                    "attachment_id": attachment_id,
+                    "filename": file.filename,
+                    "mime_type": mime_type,
+                    "status": "error",
+                    "error": (
+                        f"הקובץ גדול מ-{_MAX_ATTACHMENT_UPLOAD_BYTES // (1024 * 1024)}MB"
+                    ),
+                }
+            )
+            continue
+
+        entries.append(
+            {
+                "attachment_id": attachment_id,
+                "filename": file.filename,
+                "mime_type": mime_type,
+                "status": "processing",
+            }
+        )
         background_tasks.add_task(
-            process_attachment, recording_id, user_id, str(file_path), file.filename
+            process_attachment, recording_id, attachment_id, str(file_path), file.filename, mime_type
         )
         saved_filenames.append(file.filename)
 
+    firestore_store.add_attachments(recording_id, entries)
+
     return {"recording_id": recording_id, "status": "processing", "files": saved_filenames}
+
+
+@app.post(
+    "/recordings/{recording_id}/attachments/{attachment_id}/retry",
+    dependencies=[Depends(require_api_key)],
+)
+def retry_attachment_endpoint(
+    recording_id: str, attachment_id: str, background_tasks: BackgroundTasks
+) -> dict:
+    """מנסה שוב לסכם מצורף שנכשל, בלי לבקש מהמשתמש לצרף אותו מחדש - הקובץ
+    כבר שמור ב-Drive מאז ההעלאה הראשונה (ראה pipeline/attachments.py)."""
+    recording = firestore_store.get_recording(recording_id)
+    if recording is None:
+        raise HTTPException(status_code=404, detail="recording not found")
+
+    attachment = next(
+        (a for a in recording.get("attachments") or [] if a.get("attachment_id") == attachment_id),
+        None,
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    if not attachment.get("drive_file_id"):
+        # הקובץ המקורי מעולם לא הגיע ל-Drive (למשל השרת קרס באמצע ההעלאה
+        # הראשונה עצמה) - אין ממה לנסות שוב, המשתמש צריך לצרף מחדש.
+        raise HTTPException(
+            status_code=409, detail="original file was never uploaded to Drive; re-attach it"
+        )
+
+    firestore_store.update_attachment(recording_id, attachment_id, status="processing", error=None)
+    background_tasks.add_task(
+        retry_attachment,
+        recording_id,
+        attachment_id,
+        attachment["drive_file_id"],
+        attachment.get("drive_url", ""),
+        attachment.get("filename", ""),
+        attachment.get("mime_type", "application/octet-stream"),
+    )
+    return {"recording_id": recording_id, "attachment_id": attachment_id, "status": "processing"}
+
+
+@app.delete(
+    "/recordings/{recording_id}/attachments/{attachment_id}",
+    dependencies=[Depends(require_api_key)],
+)
+def delete_attachment(recording_id: str, attachment_id: str) -> dict:
+    """מסיר מצורף בודד: מוחק אותו מרשימת attachments ומעביר את הקובץ
+    ב-Drive לאשפה (אם כבר הועלה). לא נוגע בסיכום שכבר שולב - הסרת השילוב
+    הטקסטואלי מהסיכום דורשת קריאה חוזרת ל-Gemini על כל המצורפים שנותרו,
+    ומעבר לסקופ הזה; המשתמש שמוחק מצורף מקבל את הקובץ בחזרה מהרשימה, לא
+    עריכה אוטומטית של הסיכום שכבר נכתב."""
+    removed = firestore_store.remove_attachment(recording_id, attachment_id)
+    if removed is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    if removed.get("drive_file_id"):
+        drive.trash_files([removed["drive_file_id"]])
+    return {"recording_id": recording_id, "attachment_id": attachment_id, "status": "deleted"}

@@ -41,7 +41,11 @@ class RecordingsAdapter(
         val context = holder.root.context
         val isReady = item.transcriptUrl != null && item.summaryUrl != null
         val statusLabel = context.getString(
-            if (isReady) R.string.history_status_ready else R.string.history_status_processing
+            when {
+                item.failed -> R.string.history_status_failed
+                isReady -> R.string.history_status_ready
+                else -> R.string.history_status_processing
+            }
         )
 
         holder.title.text = item.title
@@ -54,35 +58,44 @@ class RecordingsAdapter(
         val parts = mutableListOf(item.date.toDisplayDate())
         if (item.speakers.isNotEmpty()) parts.add(item.speakers.joinToString(", "))
         parts.add(statusLabel)
+        if (item.attachments.isNotEmpty()) {
+            val badgeRes = if (item.attachments.any { it.isFailed }) {
+                R.string.attach_badge_failed
+            } else {
+                R.string.attach_badge
+            }
+            parts.add(context.getString(badgeRes, item.attachments.size))
+        }
         holder.subtitle.text = parts.joinToString("  ·  ")
 
         holder.statusDot.backgroundTintList = ColorStateList.valueOf(
-            ContextCompat.getColor(context, if (isReady) R.color.accent_cyan else R.color.accent_violet)
+            ContextCompat.getColor(
+                context,
+                when {
+                    item.failed -> R.color.accent_red
+                    isReady -> R.color.accent_cyan
+                    else -> R.color.accent_violet
+                },
+            )
         )
 
-        if (item.note.isNullOrBlank()) {
+        // בהקלטה שנכשלה, שורת ההערה מציגה במקומה את סיבת הכישלון - זה המידע
+        // היחיד שיש עליה, והוא מה שמאפשר להחליט אם לנסות שוב או למחוק.
+        val noteText = if (item.failed) item.error?.let { "⚠️ $it" } else item.note?.let { "📝 $it" }
+        if (noteText.isNullOrBlank()) {
             holder.note.visibility = View.GONE
         } else {
             holder.note.visibility = View.VISIBLE
-            holder.note.text = "📝 ${item.note}"
+            holder.note.text = noteText
         }
 
         holder.root.setOnClickListener {
-            item.folderUrl?.let(onOpenLink)
+            // הסיכום ולא התיקייה: מאז שהקבצים ב-Drive מסודרים לפי סוג
+            // ("סיכום", "תמלול"...) ולא לפי פגישה, אין תיקייה שמכילה רק את
+            // ההקלטה הזו - קישור התיקייה מוביל לספרייה כולה.
+            (item.summaryUrl ?: item.folderUrl)?.let(onOpenLink)
         }
 
         holder.menuButton.setOnClickListener { onMenuClick(it, item) }
-    }
-
-    private fun formatDuration(totalSeconds: Double): String {
-        val total = totalSeconds.toInt()
-        val hours = total / 3600
-        val minutes = (total % 3600) / 60
-        val seconds = total % 60
-        return if (hours > 0) {
-            String.format("%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format("%d:%02d", minutes, seconds)
-        }
     }
 }

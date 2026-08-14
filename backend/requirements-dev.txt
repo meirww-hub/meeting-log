@@ -1,0 +1,7 @@
+# תלויות פיתוח בלבד - לא נכנסות לאימג' של Cloud Run (ראה .dockerignore).
+#   pip install -r requirements-dev.txt
+#   pytest            # מהיר, ללא רשת - להריץ על כל שינוי
+#   pytest --live     # כולל בדיקות מול Gemini אמיתי (עולה כסף)
+-r requirements.txt
+
+pytest==9.1.1

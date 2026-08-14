@@ -10,10 +10,12 @@ import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.lifecycle.lifecycleScope
 import com.meirww.meetingscribe.databinding.ActivityHistoryBinding
@@ -253,15 +255,25 @@ class HistoryActivity : AppCompatActivity() {
             actions[id] = action
         }
 
+        // בהקלטה שנכשלה אין קישורים ואין מה לערוך - הפעולה היחידה שמעניינת
+        // היא לנסות שוב, והיא ראשונה ברשימה.
+        if (item.failed) addAction(getString(R.string.history_retry)) { retryProcessing(item) }
         item.folderUrl?.let { url -> addAction(getString(R.string.history_open_folder)) { openUrl(url) } }
         item.transcriptUrl?.let { url -> addAction(getString(R.string.link_transcript)) { openUrl(url) } }
         item.summaryUrl?.let { url -> addAction(getString(R.string.link_summary)) { openUrl(url) } }
         item.todoUrl?.let { url -> addAction(getString(R.string.link_todo)) { openUrl(url) } }
         item.audioUrl?.let { url -> addAction(getString(R.string.link_audio)) { openUrl(url) } }
-        addAction(getString(R.string.attach_file)) { onAttachFileClicked(item) }
-        addAction(getString(R.string.history_edit_title)) { showEditTitleDialog(item) }
-        addAction(getString(R.string.history_edit_speakers)) { showEditSpeakersDialog(item) }
-        addAction(getString(R.string.history_edit_note)) { showEditNoteDialog(item) }
+        if (!item.failed) {
+            if (item.attachments.isNotEmpty()) {
+                addAction(getString(R.string.attach_menu_item, item.attachments.size)) {
+                    showAttachmentsDialog(item)
+                }
+            }
+            addAction(getString(R.string.attach_file)) { onAttachFileClicked(item) }
+            addAction(getString(R.string.history_edit_title)) { showEditTitleDialog(item) }
+            addAction(getString(R.string.history_edit_speakers)) { showEditSpeakersDialog(item) }
+            addAction(getString(R.string.history_edit_note)) { showEditNoteDialog(item) }
+        }
         addAction(getString(R.string.history_delete)) { showDeleteConfirmDialog(item) }
 
         popup.setOnMenuItemClickListener { menuItem ->
@@ -319,10 +331,28 @@ class HistoryActivity : AppCompatActivity() {
             return
         }
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        // הרשימה מגיעה מהשרת לפי סדר הופעת הדוברים בתמלול (ראה
+        // speakers.speakers_in_order), והמשתמש ממלא אותה לפי אותו סדר -
+        // לכן הסדר מוצג במפורש, וכל שדה נושא מעליו את התווית שהוא מחליף.
+        container.addView(TextView(this).apply {
+            setText(R.string.history_edit_speakers_hint)
+            setTextColor(ContextCompat.getColor(context, R.color.text_secondary))
+            textSize = 13f
+        })
+
         val inputsBySpeaker = item.speakers.associateWith { speaker ->
             EditText(this).apply { setText(speaker) }
         }
-        inputsBySpeaker.forEach { (_, input) -> container.addView(input) }
+        inputsBySpeaker.entries.forEachIndexed { index, (speaker, input) ->
+            container.addView(TextView(this).apply {
+                text = getString(R.string.history_speaker_position, index + 1, speaker)
+                setTextColor(ContextCompat.getColor(context, R.color.text_secondary))
+                textSize = 12f
+                setPadding(0, (12 * resources.displayMetrics.density).toInt(), 0, 0)
+            })
+            container.addView(input)
+        }
 
         AlertDialog.Builder(this)
             .setTitle(R.string.history_edit_speakers)
@@ -338,6 +368,22 @@ class HistoryActivity : AppCompatActivity() {
             }
             .setNegativeButton(R.string.share_cancel, null)
             .show()
+    }
+
+    /**
+     * מייבא מחדש מ-cally את השיחה שהעיבוד שלה נכשל ושולח אותה שוב.
+     *
+     * העותק המקומי כבר נמחק (הוא נמחק ברגע שהשרת קלט את ההעלאה), אבל cally
+     * שומרת את המקור - ולכן די לבטל את סימון הייבוא. ההעלאה החוזרת נושאת את
+     * אותו client_upload_id ולכן נופלת על אותה רשומה בשרת, בלי כפילות.
+     */
+    private fun retryProcessing(item: RecordingItem) {
+        val started = CallImportWorker.retryFromCally(this, item.recordingId)
+        Toast.makeText(
+            this,
+            if (started) R.string.history_retry_started else R.string.history_retry_no_audio,
+            Toast.LENGTH_LONG,
+        ).show()
     }
 
     private fun showDeleteConfirmDialog(item: RecordingItem) {
@@ -481,6 +527,159 @@ class HistoryActivity : AppCompatActivity() {
             if (idx >= 0 && cursor.moveToFirst()) return cursor.getString(idx)
         }
         return null
+    }
+
+    /**
+     * רשימת המצורפים של הקלטה, עם פתיחה/ניסיון חוזר/מחיקה לכל אחד. הדיאלוג
+     * נבנה לפני שהשורות מתווספות אליו כדי שלחיצה על "נסה שוב"/"מחק" תוכל
+     * לסגור אותו מיד - בלי זה המשתמש היה רואה שורה "נכשל" שהוא כבר לחץ
+     * "נסה שוב" עליה, עד שהוא סוגר ופותח את התפריט מחדש.
+     */
+    private fun showAttachmentsDialog(item: RecordingItem) {
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(getString(R.string.attach_menu_item, item.attachments.size))
+            .setView(android.widget.ScrollView(this).apply { addView(dialogPadding(container)) })
+            .setNegativeButton(R.string.share_cancel, null)
+            .create()
+
+        item.attachments.forEachIndexed { index, attachment ->
+            if (index > 0) container.addView(dividerView())
+            container.addView(buildAttachmentRow(item.recordingId, attachment, dialog))
+        }
+
+        dialog.show()
+    }
+
+    private fun dividerView(): View = View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, (1 * resources.displayMetrics.density).toInt()
+        )
+        setBackgroundColor(ContextCompat.getColor(context, R.color.surface_stroke))
+    }
+
+    private fun buildAttachmentRow(recordingId: String, attachment: Attachment, dialog: AlertDialog): View {
+        val density = resources.displayMetrics.density
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, (10 * density).toInt(), 0, (10 * density).toInt())
+        }
+
+        column.addView(TextView(this).apply {
+            text = attachment.filename
+            setTextColor(ContextCompat.getColor(context, R.color.text_primary))
+            textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+
+        val statusText = when {
+            attachment.isProcessing -> getString(R.string.attach_status_processing)
+            attachment.isFailed -> "⚠️ ${attachment.error.orEmpty()}"
+            else -> getString(R.string.attach_status_done)
+        }
+        column.addView(TextView(this).apply {
+            text = statusText
+            setTextColor(
+                ContextCompat.getColor(
+                    context, if (attachment.isFailed) R.color.accent_red else R.color.text_secondary
+                )
+            )
+            textSize = 12f
+            setPadding(0, (2 * density).toInt(), 0, 0)
+        })
+
+        val actionsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, (6 * density).toInt(), 0, 0)
+        }
+
+        fun addAction(label: String, colorRes: Int, onClick: () -> Unit) {
+            actionsRow.addView(TextView(this@HistoryActivity).apply {
+                text = label
+                setTextColor(ContextCompat.getColor(context, colorRes))
+                textSize = 13f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(0, 0, (20 * density).toInt(), 0)
+                setOnClickListener { onClick() }
+            })
+        }
+
+        attachment.driveUrl?.let { url ->
+            addAction(getString(R.string.attach_open), R.color.accent_cyan) { openUrl(url) }
+        }
+        if (attachment.isFailed) {
+            addAction(getString(R.string.attach_retry), R.color.accent_violet) {
+                dialog.dismiss()
+                runAttachmentRetry(recordingId, attachment.attachmentId)
+            }
+        }
+        addAction(getString(R.string.attach_delete), R.color.accent_red) {
+            confirmDeleteAttachment(recordingId, attachment, dialog)
+        }
+
+        column.addView(actionsRow)
+        return column
+    }
+
+    private fun confirmDeleteAttachment(recordingId: String, attachment: Attachment, parentDialog: AlertDialog) {
+        AlertDialog.Builder(this)
+            .setMessage(getString(R.string.attach_delete_confirm, attachment.filename))
+            .setPositiveButton(R.string.attach_delete) { _, _ ->
+                parentDialog.dismiss()
+                runAttachmentDelete(recordingId, attachment.attachmentId)
+            }
+            .setNegativeButton(R.string.share_cancel, null)
+            .show()
+    }
+
+    private fun runAttachmentRetry(recordingId: String, attachmentId: String) {
+        lifecycleScope.launch {
+            val success = withContext(Dispatchers.IO) { retryAttachmentRequest(recordingId, attachmentId) }
+            Toast.makeText(
+                this@HistoryActivity,
+                if (success) R.string.attach_retry_started else R.string.attach_action_error,
+                Toast.LENGTH_SHORT,
+            ).show()
+            if (success) loadRecordings()
+        }
+    }
+
+    private fun runAttachmentDelete(recordingId: String, attachmentId: String) {
+        lifecycleScope.launch {
+            val success = withContext(Dispatchers.IO) { deleteAttachmentRequest(recordingId, attachmentId) }
+            Toast.makeText(
+                this@HistoryActivity,
+                if (success) R.string.attach_delete_success else R.string.attach_action_error,
+                Toast.LENGTH_SHORT,
+            ).show()
+            if (success) loadRecordings()
+        }
+    }
+
+    private fun retryAttachmentRequest(recordingId: String, attachmentId: String): Boolean {
+        val request = Request.Builder()
+            .url("${BuildConfig.BACKEND_BASE_URL}/recordings/$recordingId/attachments/$attachmentId/retry")
+            .header("X-API-Key", BuildConfig.BACKEND_API_KEY)
+            .post("".toRequestBody())
+            .build()
+        return try {
+            client.newCall(request).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun deleteAttachmentRequest(recordingId: String, attachmentId: String): Boolean {
+        val request = Request.Builder()
+            .url("${BuildConfig.BACKEND_BASE_URL}/recordings/$recordingId/attachments/$attachmentId")
+            .header("X-API-Key", BuildConfig.BACKEND_API_KEY)
+            .delete()
+            .build()
+        return try {
+            client.newCall(request).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            false
+        }
     }
 }
 

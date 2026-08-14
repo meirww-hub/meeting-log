@@ -27,6 +27,9 @@ object NotificationHelper {
 
     private const val CHANNEL_ID = "recording_ready_v2"
 
+    /** ראה [notifyRecordingTooShort] - התראה יחידה שמתעדכנת, לא ערימה. */
+    private const val TOO_SHORT_NOTIFICATION_ID = 9101
+
     private fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(CHANNEL_ID) != null) return
@@ -81,10 +84,31 @@ object NotificationHelper {
         )
     }
 
+    /**
+     * הקלטה שלא נשלחה לעיבוד כי היא קצרה מהמינימום (ראה AudioDuration).
+     * מודיעים כדי שהיא לא תיעלם בשקט - המשתמש לחץ "הקלט" בכוונה, ובלי הודעה
+     * הוא היה מחכה לסיכום שלא יגיע לעולם. ID קבוע: כמה הקלטות קצרות ברצף
+     * מחליפות זו את זו במקום לערום התראות.
+     */
+    fun notifyRecordingTooShort(context: Context) {
+        notify(
+            context, TOO_SHORT_NOTIFICATION_ID,
+            "ההקלטה לא נשלחה לעיבוד",
+            "הקלטות קצרות מ-${AudioDuration.MIN_PROCESSING_MINUTES} דקות אינן מעובדות"
+        )
+    }
+
+    /**
+     * ההפניה להיסטוריה נכונה רק מאז שהמסך מציג גם הקלטות שנכשלו: עד
+     * 2026-08-13 הרשימה סיננה "done" בלבד, וההתראה שלחה את המשתמש בדיוק
+     * למקום היחיד שבו ההקלטה לא הופיעה. ראה firestore_store.list_recordings.
+     */
     fun notifyRecordingFailed(context: Context, recordingId: String, label: String) {
+        val what = label.ifBlank { "ההקלטה" }
         notify(
             context, recordingId.hashCode(),
-            "עיבוד ההקלטה נכשל", label.ifBlank { "בדוק את ההיסטוריה לפרטים" }
+            "עיבוד ההקלטה נכשל",
+            "$what - פתחו את ההיסטוריה כדי לנסות שוב"
         )
     }
 }

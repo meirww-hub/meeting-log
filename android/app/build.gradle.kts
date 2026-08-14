@@ -52,4 +52,7 @@ dependencies {
     // Shizuku - הרשאות shell לקריאת הקלטות cally מתיקייה חסומה. ראה ShizukuAccess.
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+
+    // בדיקות JVM טהורות (ללא מכשיר/אמולטור): ./gradlew testDebugUnitTest
+    testImplementation("junit:junit:4.13.2")
 }

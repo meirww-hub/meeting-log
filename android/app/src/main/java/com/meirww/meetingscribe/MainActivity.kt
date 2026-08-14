@@ -18,9 +18,6 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.meirww.meetingscribe.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
@@ -56,8 +53,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * מתקבל כשההקלטה נכשלה בפועל להתחיל (MediaRecorder זרק חריגה, בדרך כלל
-     * מיקרופון תפוס) - מתקן את ה-UI האופטימי שכפתור ההקלטה כבר הראה.
+     * מתקבל כשלא ניתן היה לפתוח הקלטה בכלל (בעיית אחסון) - מתקן את ה-UI
+     * האופטימי שכפתור ההקלטה כבר הראה. מיקרופון תפוס *אינו* נכלל כאן:
+     * ההקלטה במקרה כזה ממתינה ומתחדשת לבד, ראה [captureStateReceiver].
      */
     private val recordingFailedReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -65,9 +63,31 @@ class MainActivity : AppCompatActivity() {
             applyIdleUi()
             Toast.makeText(
                 this@MainActivity,
-                "ההקלטה נכשלה להתחיל - ייתכן שהמיקרופון תפוס על ידי אפליקציה אחרת. נסה שוב.",
+                "לא ניתן להתחיל הקלטה - בדוק שיש מקום פנוי באחסון ונסה שוב.",
                 Toast.LENGTH_LONG
             ).show()
+        }
+    }
+
+    /**
+     * המיקרופון נחטף (שיחה נכנסת) או חזר. ההקלטה ממשיכה להיות פעילה בשני
+     * המצבים - רק הטקסט משתנה, כדי שהמשתמש ידע מה קורה ולא יעצור בטעות.
+     */
+    private val captureStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (!isRecording) return
+            val capturing = intent.getBooleanExtra(RecordingService.EXTRA_CAPTURING, true)
+            if (capturing) {
+                binding.statusText.text = getString(R.string.status_recording)
+                binding.statusText.setTextColor(
+                    ContextCompat.getColor(this@MainActivity, R.color.record_active)
+                )
+            } else {
+                binding.statusText.text = getString(R.string.status_recording_waiting_mic)
+                binding.statusText.setTextColor(
+                    ContextCompat.getColor(this@MainActivity, R.color.text_secondary)
+                )
+            }
         }
     }
 
@@ -82,6 +102,9 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     private val requestCallLogLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private val requestContactsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     private val requestNotificationsLauncher =
@@ -112,12 +135,17 @@ class MainActivity : AppCompatActivity() {
         bindService(
             Intent(this, RecordingService::class.java), serviceConnection, Context.BIND_AUTO_CREATE
         )
-        val filter = IntentFilter(RecordingService.ACTION_RECORDING_FAILED)
+        registerLocal(recordingFailedReceiver, RecordingService.ACTION_RECORDING_FAILED)
+        registerLocal(captureStateReceiver, RecordingService.ACTION_CAPTURE_STATE)
+    }
+
+    private fun registerLocal(receiver: BroadcastReceiver, action: String) {
+        val filter = IntentFilter(action)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(recordingFailedReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(recordingFailedReceiver, filter)
+            registerReceiver(receiver, filter)
         }
     }
 
@@ -131,6 +159,7 @@ class MainActivity : AppCompatActivity() {
         unbindService(serviceConnection)
         boundService = null
         unregisterReceiver(recordingFailedReceiver)
+        unregisterReceiver(captureStateReceiver)
     }
 
     /**
@@ -139,9 +168,16 @@ class MainActivity : AppCompatActivity() {
      */
     private fun syncUiToServiceState() {
         val actuallyRecording = RecordingService.isRecording
-        if (actuallyRecording == isRecording) return
-        isRecording = actuallyRecording
-        if (actuallyRecording) applyRecordingUi() else applyIdleUi()
+        if (actuallyRecording != isRecording) {
+            isRecording = actuallyRecording
+            if (actuallyRecording) applyRecordingUi() else applyIdleUi()
+        }
+        // הקלטה יכולה להיות פעילה אך ממתינה למיקרופון (שיחה) - חוזרים למסך
+        // ורואים את המצב האמיתי ולא "מקליט..." מטעה.
+        if (actuallyRecording && boundService?.isCapturing() == false) {
+            binding.statusText.text = getString(R.string.status_recording_waiting_mic)
+            binding.statusText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        }
     }
 
     /**
@@ -163,6 +199,15 @@ class MainActivity : AppCompatActivity() {
         ) == PackageManager.PERMISSION_GRANTED
         if (!hasCallLog) {
             requestCallLogLauncher.launch(Manifest.permission.READ_CALL_LOG)
+        }
+
+        // בלי ההרשאה הזו הצד השני בשיחה מתויג לפי CACHED_NAME שביומן השיחות -
+        // צילום מטמוני שלא מתעדכן. ראה CallImportWorker.contactNameForNumber.
+        val hasContacts = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasContacts) {
+            requestContactsLauncher.launch(Manifest.permission.READ_CONTACTS)
         }
 
         if (ShizukuAccess.isAvailable() && !ShizukuAccess.hasPermission()) {
@@ -199,12 +244,19 @@ class MainActivity : AppCompatActivity() {
         applyRecordingUi()
     }
 
+    /**
+     * העצירה שולחת מיד לעיבוד עם הכותרת שהוקלדה (השרת מייצר כותרת לבד אם
+     * היא ריקה, והיא ניתנת לעריכה מההיסטוריה). הזרימה הישנה - לשמור בזיכרון
+     * ולחכות ללחיצה ידנית על "שלח לעיבוד" - איבדה כל הקלטה שהמשתמש לא שלח
+     * מיד, כולל כשהמערכת הרגה את התהליך אחרי מעבר לשיחה.
+     */
     private fun stopRecording() {
-        // עצירה מהכפתור בתוך האפליקציה לא מעלה אוטומטית - שומר על הזרימה
-        // הקיימת של עריכת כותרת ולחיצה ידנית על "העלה".
-        RecordingService.stop(applicationContext, autoUpload = false)
+        RecordingService.stop(applicationContext, binding.titleInput.text?.toString().orEmpty())
+        binding.titleInput.setText("")
         isRecording = false
         applyIdleUi()
+        binding.statusText.text = getString(R.string.status_uploading)
+        binding.statusText.setTextColor(ContextCompat.getColor(this, R.color.accent_cyan))
     }
 
     private fun applyRecordingUi() {
@@ -252,22 +304,25 @@ class MainActivity : AppCompatActivity() {
         binding.recordButtonRing.scaleY = 1f
     }
 
+    /**
+     * העלאה אוטומטית כבר קורית בכל עצירה, ולכן הכפתור הזה הוא רשת הביטחון:
+     * הוא דוחף מיד כל הקלטה שנתקעה על המכשיר (העלאה שנכשלה ברשת, תהליך
+     * שנהרג באמצע) במקום לחכות לסריקה הבאה.
+     */
     private fun uploadLastRecording() {
-        val audioFile = RecordingService.lastOutputFile ?: return
-        val title = binding.titleInput.text?.toString().orEmpty()
+        val pending = RecordingRecovery.pendingCount(applicationContext)
+        if (pending == 0) {
+            Toast.makeText(this, R.string.upload_nothing_pending, Toast.LENGTH_SHORT).show()
+            return
+        }
 
-        val uploadRequest = OneTimeWorkRequestBuilder<UploadWorker>()
-            .setInputData(
-                workDataOf(
-                    UploadWorker.KEY_AUDIO_PATH to audioFile.absolutePath,
-                    UploadWorker.KEY_TITLE to title
-                )
-            )
-            .build()
-
-        WorkManager.getInstance(applicationContext).enqueue(uploadRequest)
+        RecordingRecovery.sweep(applicationContext)
+        Toast.makeText(
+            this,
+            getString(R.string.upload_pending_sent, pending),
+            Toast.LENGTH_LONG
+        ).show()
         binding.statusText.text = getString(R.string.status_uploading)
         binding.statusText.setTextColor(ContextCompat.getColor(this, R.color.accent_cyan))
-        binding.uploadButton.isEnabled = false
     }
 }

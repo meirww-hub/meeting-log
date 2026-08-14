@@ -16,6 +16,7 @@ from app.config import settings
 from app.models import TranscriptSegment
 from app.pipeline._retry import call_with_retry
 
+from app.pipeline._model import GEMINI_MAX_OUTPUT_TOKENS as _MAX_OUTPUT_TOKENS
 from app.pipeline._model import GEMINI_MODEL as _MODEL
 
 
@@ -37,14 +38,69 @@ _SYSTEM_PROMPT = """\
 ללא טקסט נוסף.
 """
 
+# כלל השפה משותף לשני מסלולי התמלול (פגישה עם diarization / ערוץ שיחה מבודד),
+# כי הוא אותה דרישה בדיוק ואסור שהם ייפרדו בטעות.
+#
+# **לא להחזיר הוראה שמכתיבה שפה קבועה** ("תמלל בשפה he-IL"). כך זה היה עד
+# 2026-08-11, וזה עבד רק במקרה: בבדיקה חיה על אודיו באנגלית המודל התעלם
+# מההוראה ותמלל באנגלית - אבל היינו מבקשים ממנו במפורש לתרגם, וגרסת מודל
+# אחרת הייתה יכולה לציית ולהחזיר פגישה באנגלית מתורגמת לעברית. התמלול הוא
+# מסמך המקור של השיחה; תרגום בשלב הזה מאבד מידע שאי אפשר לשחזר.
+_LANGUAGE_RULE = """\
+תמלל כל קטע בשפה שבה הוא נאמר בפועל, מילה במילה, ולעולם אל תתרגם. אם
+בהקלטה מדברים ביותר משפה אחת - התמלול יהיה משולב באותו אופן: מה שנאמר
+בעברית ייכתב בעברית ומה שנאמר באנגלית ייכתב באנגלית ובאותיות לטיניות.
+
+זה נכון גם בתוך משפט אחד: משפט בעברית שמשובצות בו מילים באנגלית נכתב
+בדיוק כך - המילים האנגליות באותיות לטיניות, גם כשהן נאמרות במבטא ישראלי
+וגם כשהן מילה בודדת באמצע משפט עברי. אסור לתעתק מילה אנגלית לאותיות
+עבריות ואסור לתרגם אותה. לדוגמה:
+  נכון:  "שלחתי לך את ה-invoice, תעדכן את ה-roadmap עד מחר"
+  שגוי:  "שלחתי לך את האינבויס, תעדכן את המפת דרכים עד מחר"
+"""
+
 _SCHEMA_HINT = """\
 החזר מערך JSON של קטעי דיבור, לפי סדר כרונולוגי, במבנה הבא בדיוק:
 [
   {{"speaker_tag": 1, "text": "...", "start_seconds": 0.0, "end_seconds": 3.2}}
 ]
 speaker_tag הוא מספר עוקב לכל דובר (1, 2, 3...) - אותו דובר תמיד אותו מספר
-לאורך כל ההקלטה. תמלל בשפה {language}.
+לאורך כל ההקלטה.
+
+{language_rule}"""
+
+
+# כמה בקשות המשך מותר לשרשר כשהתמלול עדיין נקטע. שיחה של שעה מסתכמת בכ-30
+# אלף טוקנים, כלומר סבב אחד מספיק לה בנוחות; המכסה כאן נועדה להקלטות חריגות
+# ממש (כמה שעות), ובעיקר לחסום לולאה אינסופית אם המודל מפסיק להתקדם.
+_MAX_CONTINUATIONS = 8
+
+# חפיפה מותרת בין סבב לסבב. המודל לא חוזר לשנייה מדויקת, ובלי הסובלנות הזו
+# משפט שנחתך בדיוק על הגבול היה נופל בין הכיסאות.
+_RESUME_TOLERANCE_SECONDS = 1.0
+
+_RESUME_RULE = """\
+
+חשוב: כבר תומללו {done_seconds:.0f} השניות הראשונות של ההקלטה. תמלל **רק את
+ההמשך**, החל משנייה {done_seconds:.0f} ועד סוף ההקלטה, ואל תחזור על מה שכבר
+תומלל. start_seconds ו-end_seconds נמדדים כרגיל מתחילת ההקלטה כולה (כלומר
+הקטע הראשון שתחזיר יתחיל בסביבות שנייה {done_seconds:.0f}).
 """
+
+_RESUME_SPEAKER_RULE = """\
+שמור על אותו מספור דוברים כמו קודם - אלה אותם אנשים. אלה הקטעים האחרונים
+שתומללו, כדי שתדע איזה מספר שייך למי:
+{tail}
+"""
+
+
+class IncompleteTranscriptError(RuntimeError):
+    """התמלול נקטע ולא הצליח להשלים את ההקלטה עד סופה.
+
+    נזרק במקום להחזיר תמלול חלקי: הקלטה שנשמרת כ"done" עם חצי מהתוכן היא
+    אובדן שקט שאיש לא ישים לב אליו, בעוד כישלון גלוי מופיע בהיסטוריה ונכנס
+    לניסיון חוזר אוטומטי.
+    """
 
 
 def _mime_type_for(audio_path: str) -> str:
@@ -52,31 +108,153 @@ def _mime_type_for(audio_path: str) -> str:
     return guessed or "audio/mp4"
 
 
-def transcribe_with_diarization(
-    audio_path: str, max_speakers: int = 6
-) -> list[TranscriptSegment]:
-    client = genai.Client(api_key=settings.gemini_api_key)
+def _hit_output_ceiling(response) -> bool:
+    """true כשהמודל הפסיק לכתוב כי נגמר לו תקציב הפלט, ולא כי סיים."""
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        return False
+    return "MAX_TOKENS" in str(getattr(candidates[0], "finish_reason", ""))
 
+
+def _decode_items(text: str) -> tuple[list[dict], bool]:
+    """מפרק את תשובת המודל למערך פריטים, ומחזיר גם אם היא הגיעה קטועה.
+
+    `json.loads` על תשובה שנקטעה באמצע זורק, ואיתו יורדים לטמיון גם מאות
+    הקטעים **השלמים** שכן הספיקו להגיע - כך אבדה שיחה שלמה בגלל שהקטע
+    האחרון בה נחתך באמצע מילה. לכן כישלון פירוק לא מסיים כאן את העבודה אלא
+    נסוג אחורה אל הסוגר המסולסל האחרון שסוגר פריט שלם, ומחזיר את הרישא
+    התקינה - הזנב החסר מושלם אחר כך בבקשת המשך.
+    """
+    if not text.strip():
+        return [], True
+    try:
+        return json.loads(text), False
+    except json.JSONDecodeError:
+        pass
+
+    # נסיגה אחורה על פני סוגרי פריטים, מהאחרון לראשון: הסוגר האחרון הוא
+    # בדרך כלל הנכון, אבל '}' יכול להופיע גם בתוך טקסט מדובר.
+    for cut in range(len(text) - 1, -1, -1):
+        if text[cut] != "}":
+            continue
+        try:
+            items = json.loads(f"{text[: cut + 1]}]")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(items, list):
+            return items, True
+    return [], True
+
+
+def _segment_end(item: dict) -> float:
+    try:
+        return float(item.get("end_seconds") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _segment_start(item: dict) -> float:
+    try:
+        return float(item.get("start_seconds") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _transcribe_in_full(
+    *,
+    audio_path: str,
+    system_prompt: str,
+    schema_hint: str,
+    response_schema,
+    speaker_tail: bool,
+) -> list[dict]:
+    """מתמלל קובץ שלם, גם כשהתשובה לא נכנסת לבקשה אחת.
+
+    כל עוד המודל נקטע באמצע, נשלחת בקשת המשך שמתחילה מהשנייה שאליה הגיע
+    התמלול עד כה - במקום להיכשל ולאבד את ההקלטה, או להחזיר אותה חתוכה בשקט.
+    הקובץ מועלה פעם אחת בלבד ומשמש את כל הסבבים.
+    """
+    client = genai.Client(api_key=settings.gemini_api_key)
     uploaded_file = client.files.upload(
         file=audio_path,
         config=types.UploadFileConfig(mime_type=_mime_type_for(audio_path)),
     )
 
-    response = call_with_retry(
-        client.models.generate_content,
-        model=_MODEL,
-        contents=[
-            uploaded_file,
-            _SCHEMA_HINT.format(language=settings.transcription_language),
-        ],
-        config=types.GenerateContentConfig(
-            system_instruction=_SYSTEM_PROMPT,
-            response_mime_type="application/json",
-            response_schema=list[_DiarizedSegment],
-        ),
-    )
+    collected: list[dict] = []
+    covered_seconds = 0.0
+    complete = False
 
-    items = json.loads(response.text)
+    for round_index in range(_MAX_CONTINUATIONS):
+        prompt = schema_hint
+        if round_index > 0:
+            prompt += _RESUME_RULE.format(done_seconds=covered_seconds)
+            if speaker_tail:
+                tail = "\n".join(
+                    f"דובר {item.get('speaker_tag')}: {item.get('text', '')}"
+                    for item in collected[-5:]
+                )
+                prompt += _RESUME_SPEAKER_RULE.format(tail=tail)
+
+        response = call_with_retry(
+            client.models.generate_content,
+            model=_MODEL,
+            contents=[uploaded_file, prompt],
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                response_mime_type="application/json",
+                response_schema=response_schema,
+                max_output_tokens=_MAX_OUTPUT_TOKENS,
+            ),
+        )
+
+        items, salvaged = _decode_items(response.text or "")
+        truncated = salvaged or _hit_output_ceiling(response)
+
+        # בסבב המשך המודל עלול לפתוח מעט לפני הנקודה שביקשנו; הקטעים
+        # שכבר בידינו נשמטים כדי שהתמלול לא יכפיל משפטים.
+        floor = covered_seconds - _RESUME_TOLERANCE_SECONDS if round_index else -1.0
+        fresh = [item for item in items if _segment_start(item) > floor]
+
+        if fresh:
+            collected.extend(fresh)
+            covered_seconds = max(covered_seconds, max(_segment_end(i) for i in fresh))
+        else:
+            # אף קטע חדש. או שהמודל התעלם מבקשת ההמשך והתחיל לתמלל מחדש
+            # מההתחלה - ואז התשובה הזו היא ניסיון שלם יותר, ומחליפה את מה
+            # שבידינו - או שהוא נתקע ומחזיר את אותו זנב, ואז אין טעם בעוד סבב.
+            restart_coverage = max((_segment_end(i) for i in items), default=0.0)
+            if restart_coverage <= covered_seconds:
+                break
+            collected = list(items)
+            covered_seconds = restart_coverage
+
+        if not truncated:
+            complete = True
+            break
+
+    if not complete:
+        # תמלול חלקי **אסור** שייראה כהצלחה: הקלטה שנשמרה כ"done" עם חצי
+        # תוכן היא בדיוק סוג האובדן השקט שהמנגנון הזה נועד למנוע, ורק כאן
+        # ידוע שזה מה שקרה. כישלון גלוי מגיע להיסטוריה ולניסיון חוזר
+        # (ראה main.py ו-_run_recording_pipeline).
+        raise IncompleteTranscriptError(
+            f"התמלול נקטע ולא הושלם גם אחרי {_MAX_CONTINUATIONS} בקשות המשך - "
+            f"הושלמו {covered_seconds / 60:.1f} דקות ב-{len(collected)} קטעים"
+        )
+
+    return collected
+
+
+def transcribe_with_diarization(
+    audio_path: str, max_speakers: int = 6
+) -> list[TranscriptSegment]:
+    items = _transcribe_in_full(
+        audio_path=audio_path,
+        system_prompt=_SYSTEM_PROMPT,
+        schema_hint=_SCHEMA_HINT.format(language_rule=_LANGUAGE_RULE),
+        response_schema=list[_DiarizedSegment],
+        speaker_tail=True,
+    )
 
     return [
         TranscriptSegment(
@@ -87,6 +265,7 @@ def transcribe_with_diarization(
             end_seconds=item["end_seconds"],
         )
         for item in items
+        if str(item.get("text", "")).strip()
     ]
 
 
@@ -101,8 +280,9 @@ _SINGLE_CHANNEL_SCHEMA_HINT = """\
 [
   {{"text": "...", "start_seconds": 0.0, "end_seconds": 3.2}}
 ]
-אל תכלול שדה דובר - כל הקטעים שייכים לאותו דובר יחיד. תמלל בשפה {language}.
-"""
+אל תכלול שדה דובר - כל הקטעים שייכים לאותו דובר יחיד.
+
+{language_rule}"""
 
 
 def transcribe_single_channel(
@@ -114,28 +294,13 @@ def transcribe_single_channel(
     הקובץ - ולכן אין צורך ב-diarization, וזיהוי הדובר יוצא ודאי במקום
     ניחוש לפי מאפייני קול (ראה transcribe_with_diarization לעומת זאת).
     """
-    client = genai.Client(api_key=settings.gemini_api_key)
-
-    uploaded_file = client.files.upload(
-        file=audio_path,
-        config=types.UploadFileConfig(mime_type=_mime_type_for(audio_path)),
+    items = _transcribe_in_full(
+        audio_path=audio_path,
+        system_prompt=_SINGLE_CHANNEL_SYSTEM_PROMPT,
+        schema_hint=_SINGLE_CHANNEL_SCHEMA_HINT.format(language_rule=_LANGUAGE_RULE),
+        response_schema=list[_SingleChannelSegment],
+        speaker_tail=False,
     )
-
-    response = call_with_retry(
-        client.models.generate_content,
-        model=_MODEL,
-        contents=[
-            uploaded_file,
-            _SINGLE_CHANNEL_SCHEMA_HINT.format(language=settings.transcription_language),
-        ],
-        config=types.GenerateContentConfig(
-            system_instruction=_SINGLE_CHANNEL_SYSTEM_PROMPT,
-            response_mime_type="application/json",
-            response_schema=list[_SingleChannelSegment],
-        ),
-    )
-
-    items = json.loads(response.text)
 
     return [
         TranscriptSegment(

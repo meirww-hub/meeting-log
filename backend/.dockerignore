@@ -6,3 +6,6 @@ __pycache__
 service-account.json
 oauth_client.json
 scripts
+tests
+pytest.ini
+requirements-dev.txt
