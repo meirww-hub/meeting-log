@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -38,6 +39,32 @@ class MainActivity : AppCompatActivity() {
             if (!isRecording) return
             binding.equalizerView.setAmplitude(boundService?.currentAmplitude() ?: 0)
             mainHandler.postDelayed(this, AMPLITUDE_POLL_INTERVAL_MS)
+        }
+    }
+
+    /** מציג כמה זמן עובר מתחילת ההקלטה - נשען על זמן ההתחלה האמיתי מהדיסק
+     * ולא על שעון פנימי, כך שאחרי סגירה ופתיחה מחדש של המסך הטיימר ממשיך
+     * מהמקום הנכון ולא מתאפס. */
+    private val elapsedTicker = object : Runnable {
+        override fun run() {
+            if (!isRecording) return
+            val startedAt = RecordingSessionState.startedAtMillis(applicationContext)
+            if (startedAt != null) {
+                binding.timerText.text = formatElapsed(System.currentTimeMillis() - startedAt)
+            }
+            mainHandler.postDelayed(this, 1000L)
+        }
+    }
+
+    private fun formatElapsed(millis: Long): String {
+        val totalSeconds = (millis / 1000).coerceAtLeast(0)
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) {
+            String.format("%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format("%02d:%02d", minutes, seconds)
         }
     }
 
@@ -125,6 +152,15 @@ class MainActivity : AppCompatActivity() {
         }
         binding.chatButton.setOnClickListener {
             startActivity(Intent(this, ChatActivity::class.java))
+        }
+        binding.unidentifiedSpeakersButton.setOnClickListener {
+            startActivity(Intent(this, UnidentifiedSpeakersActivity::class.java))
+        }
+
+        updateThemeToggleIcon()
+        binding.themeToggleButton.setOnClickListener {
+            ThemePrefs.setNightMode(this, !ThemePrefs.isNightMode(this))
+            recreate()
         }
 
         setUpCallAutoImport()
@@ -228,6 +264,11 @@ class MainActivity : AppCompatActivity() {
         CallImportWorker.schedule(applicationContext, delaySeconds = 5)
     }
 
+    private fun updateThemeToggleIcon() {
+        val icon = if (ThemePrefs.isNightMode(this)) R.drawable.ic_sun else R.drawable.ic_moon
+        binding.themeToggleButton.setImageResource(icon)
+    }
+
     private fun ensurePermissionAndRecord() {
         val hasPermission = ContextCompat.checkSelfPermission(
             this, Manifest.permission.RECORD_AUDIO
@@ -268,6 +309,8 @@ class MainActivity : AppCompatActivity() {
 
         binding.equalizerView.setRecording(true)
         mainHandler.post(amplitudePoller)
+        binding.timerText.visibility = View.VISIBLE
+        mainHandler.post(elapsedTicker)
         startPulse()
     }
 
@@ -280,6 +323,8 @@ class MainActivity : AppCompatActivity() {
 
         binding.equalizerView.setRecording(false)
         mainHandler.removeCallbacks(amplitudePoller)
+        binding.timerText.visibility = View.GONE
+        mainHandler.removeCallbacks(elapsedTicker)
         stopPulse()
     }
 

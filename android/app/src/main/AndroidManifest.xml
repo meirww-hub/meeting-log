@@ -18,6 +18,9 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- Shizuku מעניקה את ההרשאה הזו בבקשה הראשונה; בלעדיה כל קריאה נכשלת. -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <!-- לבדוק מיד אחרי אתחול אם Shizuku (שלא שורד אתחול) חזר לפעול, במקום
+         לחכות לשיחה הבאה כדי לגלות שהייבוא מושבת. ראה BootCompletedReceiver. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
@@ -49,6 +52,10 @@
             android:name=".ChatActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".UnidentifiedSpeakersActivity"
+            android:exported="false" />
+
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
@@ -62,6 +69,14 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".BootCompletedReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
 

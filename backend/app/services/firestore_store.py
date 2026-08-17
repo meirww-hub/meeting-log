@@ -1,8 +1,5 @@
-"""מטא-דאטה של הקלטות ופרופילי דוברים (שם + embedding קול).
-
-שלד לשלב 2. כרגע חושף רק רישום סטטוס הקלטה (pending/done/error) כדי
-שה-endpoint יוכל לדווח התקדמות לאפליקציה.
-"""
+"""מטא-דאטה של הקלטות (סטטוס עיבוד, תוצאות) ופרופילי דוברים (שם + embedding
+קול לזיהוי חוצה-הקלטות - ראה pipeline/speaker_id.py)."""
 
 import datetime
 
@@ -214,24 +211,123 @@ def list_expired_short_recordings(
     return candidates
 
 
-def get_speaker_profiles(user_id: str) -> list[dict]:
-    """מחזיר את פרופילי הדוברים השמורים של המשתמש: [{"name", "embedding"}].
+def list_stale_recordings(
+    user_id: str, nonterminal_statuses: tuple[str, ...], min_age: datetime.timedelta
+) -> list[dict]:
+    """הקלטות שנכנסו לעיבוד ולא יצאו ממנו - לא "done" ולא "error" - יותר
+    מ-min_age. ראה pipeline/edit.py:recover_stale_recordings: תהליך שנהרג
+    באמצע (למשל Cloud Run שחרג ממכסת זיכרון, כפי שקרה בפועל ב-2026-08-16)
+    לא זורק חריגה שמנגנון הניסיון החוזר יכול לתפוס - הוא פשוט נעלם, וההקלטה
+    נשארת קפואה בסטטוס האחרון שלה לנצח, בלי סימן."""
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - min_age
+    docs = (
+        _client()
+        .collection(_RECORDINGS_COLLECTION)
+        .where("user_id", "==", user_id)
+        .where("status", "in", list(nonterminal_statuses))
+        .stream()
+    )
+    stale = []
+    read_count = 0
+    for doc in docs:
+        read_count += 1
+        data = doc.to_dict()
+        created_at = data.get("created_at")
+        if not created_at or created_at > cutoff:
+            continue
+        data["recording_id"] = doc.id
+        stale.append(data)
+    usage_tracker.record("reads", count=read_count)
+    return stale
 
-    ייעודי לשלב 2 (identify_speakers ב-pipeline/speaker_id.py).
-    """
+
+# --- פרופילי דוברים (זיהוי לפי טביעת קול) --------------------------------
+#
+# פרופיל = {name (None כל עוד לא תויג), embedding (וקטור ממוצע), sample_count,
+# sample_recording_id/sample_channel/sample_start_seconds (מצביע להשמעה של
+# הדגימה האחרונה - למסך פרופילי הדוברים באפליקציה, גם לתיוג ראשוני וגם
+# לתיקון שם קיים)}.
+#
+# "מהיום והלאה" בכוונה: תיוג פרופיל לא סורק/מתקן הקלטות שכבר נשמרו - הוא
+# רק קובע את name, וההתאמה הבאה שתרוץ (על הקלטה חדשה) תשתמש בו. ראה
+# pipeline/speaker_id.py.
+
+
+def list_speaker_profiles(user_id: str) -> list[dict]:
+    """כל פרופילי הדוברים של המשתמש, כולל הלא-מתויגים - להתאמה מול קטע
+    חדש (ראה speaker_id.resolve_or_enroll)."""
     docs = (
         _client()
         .collection(_SPEAKER_PROFILES_COLLECTION)
         .where("user_id", "==", user_id)
         .stream()
     )
-    profiles = [doc.to_dict() for doc in docs]
+    profiles = []
+    for doc in docs:
+        data = doc.to_dict()
+        data["profile_id"] = doc.id
+        profiles.append(data)
     usage_tracker.record("reads", count=len(profiles))
     return profiles
 
 
-def save_speaker_profile(user_id: str, name: str, embedding: list[float]) -> None:
-    _client().collection(_SPEAKER_PROFILES_COLLECTION).add(
-        {"user_id": user_id, "name": name, "embedding": embedding}
+def get_speaker_profile(profile_id: str) -> dict | None:
+    doc = _client().collection(_SPEAKER_PROFILES_COLLECTION).document(profile_id).get()
+    usage_tracker.record("reads")
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    data["profile_id"] = doc.id
+    return data
+
+
+def find_speaker_profile_by_name(user_id: str, name: str) -> dict | None:
+    """הפרופיל הקיים בשם הזה, אם יש - כדי שהעשרה משיחת טלפון (contact_name
+    ודאי) תמזג לתוך אותו פרופיל ולא תיצור כפילות."""
+    docs = (
+        _client()
+        .collection(_SPEAKER_PROFILES_COLLECTION)
+        .where("user_id", "==", user_id)
+        .where("name", "==", name)
+        .limit(1)
+        .stream()
     )
+    for doc in docs:
+        usage_tracker.record("reads")
+        data = doc.to_dict()
+        data["profile_id"] = doc.id
+        return data
+    usage_tracker.record("reads")
+    return None
+
+
+def create_speaker_profile(
+    user_id: str,
+    embedding: list[float],
+    sample_recording_id: str,
+    sample_channel: int,
+    sample_start_seconds: float,
+    name: str | None = None,
+) -> str:
+    doc_ref = _client().collection(_SPEAKER_PROFILES_COLLECTION).document()
+    doc_ref.set({
+        "user_id": user_id,
+        "name": name,
+        "embedding": embedding,
+        "sample_count": 1,
+        "sample_recording_id": sample_recording_id,
+        "sample_channel": sample_channel,
+        "sample_start_seconds": sample_start_seconds,
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    })
+    usage_tracker.record("writes")
+    return doc_ref.id
+
+
+def update_speaker_profile(profile_id: str, **fields) -> None:
+    """עדכון פרופיל קיים - מיזוג embedding/sample_count (ראה
+    speaker_id.py) או תיוג name מהמסך "דוברים לא מזוהים"."""
+    doc_ref = _client().collection(_SPEAKER_PROFILES_COLLECTION).document(profile_id)
+    doc_ref.set({**fields, "updated_at": firestore.SERVER_TIMESTAMP}, merge=True)
     usage_tracker.record("writes")

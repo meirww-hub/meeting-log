@@ -107,7 +107,9 @@ class CallImportWorker(appContext: Context, params: WorkerParameters) :
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        if (!ShizukuAccess.isAvailable() || !ShizukuAccess.hasPermission()) {
+        val shizukuReady = ShizukuAccess.isAvailable() && ShizukuAccess.hasPermission()
+        ShizukuAccess.notifyOutageOnce(applicationContext, shizukuReady)
+        if (!shizukuReady) {
             return@withContext Result.retry()
         }
 

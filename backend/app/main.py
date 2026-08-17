@@ -8,7 +8,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.responses import Response, StreamingResponse
 
 from app.config import settings
-from app.models import ChatRequest, RecordingUpdateRequest
+from app.models import ChatRequest, RecordingUpdateRequest, SpeakerProfileUpdateRequest
 from app.pipeline import edit as recording_edit
 from app.pipeline.attachments import mime_type_for, process_attachment, retry_attachment
 from app.pipeline.chat import answer_question
@@ -199,13 +199,54 @@ def update_recording(recording_id: str, payload: RecordingUpdateRequest) -> dict
     return recording_edit.apply_update(recording_id, recording, payload)
 
 
+@app.get("/speaker-profiles", dependencies=[Depends(require_api_key)])
+def list_speaker_profiles(user_id: str) -> list[dict]:
+    """כל פרופילי הדוברים שזוהו לפי טביעת קול - מתויגים ולא-מתויגים כאחד -
+    למסך פרופילי הדוברים באפליקציה, גם לתיוג ראשוני וגם לתיקון שם קיים.
+    כל פרופיל הוא קול אחד שנצבר על פני הקלטות (ראה pipeline/speaker_id.py),
+    לא שורה לכל הקלטה - אותו דובר שחוזר בכמה הקלטות מופיע כאן פעם אחת
+    בלבד. name הוא null כל עוד לא תויג. recording_id/channel/start_seconds
+    מצביעים על דגימת שמע להשמעה - אותו מסלול הזרמה כמו /recordings/{id}/audio."""
+    profiles = firestore_store.list_speaker_profiles(user_id)
+    return [
+        {
+            "profile_id": p["profile_id"],
+            "name": p.get("name"),
+            "recording_id": p["sample_recording_id"],
+            "channel": p["sample_channel"],
+            "start_seconds": p["sample_start_seconds"],
+        }
+        for p in profiles
+    ]
+
+
+@app.patch("/speaker-profiles/{profile_id}", dependencies=[Depends(require_api_key)])
+def name_speaker_profile(profile_id: str, payload: SpeakerProfileUpdateRequest) -> dict:
+    """מתייג פרופיל דובר בשם, או מתקן שם שכבר קיים לו. חל רק מהיום והלאה -
+    הקלטות שכבר נשמרו לא נסרקות ולא מתעדכנות (הוחלט במפורש; ראה speaker_id.py)."""
+    if firestore_store.get_speaker_profile(profile_id) is None:
+        raise HTTPException(status_code=404, detail="speaker profile not found")
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    firestore_store.update_speaker_profile(profile_id, name=name)
+    return {"profile_id": profile_id, "name": name}
+
+
 @app.post("/recordings/cleanup", dependencies=[Depends(require_api_key)])
 def cleanup_recordings(user_id: str) -> dict:
-    """מוחק אוטומטית הקלטות קצרות מ-2 דקות שלא נערכו, 48 שעות ומעלה אחרי
-    יצירתן. נקרא מהאפליקציה בכל טעינה של מסך ההיסטוריה (ראה
-    HistoryActivity.kt) - אין מנגנון תזמון בצד השרת."""
+    """שתי תחזוקות שוטפות, שתיהן נקראות מהאפליקציה בכל טעינה של מסך
+    ההיסטוריה (ראה HistoryActivity.kt) - אין מנגנון תזמון בצד השרת:
+
+    1. מוחק הקלטות קצרות מ-2 דקות שלא נערכו, 48 שעות ומעלה אחרי יצירתן.
+    2. מסמן כ"error" הקלטות שנתקעו בסטטוס ביניים יותר מ-30 דקות - תהליך
+       שהומת מבחוץ (למשל Cloud Run שחרג ממכסת זיכרון) לא זורק חריגה
+       שהניסיון החוזר הרגיל תופס, ובלי הבדיקה הזו הקלטה כזו נשארת קפואה
+       לנצח בלי סימן. ראה recover_stale_recordings.
+    """
     deleted_ids = recording_edit.cleanup_expired_recordings(user_id)
-    return {"deleted": deleted_ids}
+    recovered_ids = recording_edit.recover_stale_recordings(user_id)
+    return {"deleted": deleted_ids, "recovered": recovered_ids}
 
 
 @app.delete("/recordings/{recording_id}", dependencies=[Depends(require_api_key)])

@@ -116,6 +116,13 @@
     <string name="player_pick_recording">מאיזו הקלטה להשמיע?</string>
     <string name="player_blocked_while_recording">הקלטה פעילה - עצרו אותה לפני האזנה, אחרת הניגון ייכנס לתוכה</string>
 
+    <string name="unidentified_speakers_title">פרופילי דוברים</string>
+    <string name="unidentified_speakers_subtitle">הקשיבו לקטע ותנו שם - מעכשיו והלאה הדובר הזה יזוהה אוטומטית לפי הקול, בכל הקלטה חדשה. אפשר גם לתקן שם שכבר קיים לדובר.</string>
+    <string name="unidentified_speakers_empty">עדיין אין פרופילי דוברים</string>
+    <string name="unidentified_speakers_load_error">שגיאה בטעינת הרשימה, נסו שוב</string>
+    <string name="unidentified_speaker_name_hint">שם הדובר</string>
+    <string name="unidentified_speaker_saved">השם נשמר</string>
+
     <string name="share_receive_title">התקבלה הקלטת שיחה</string>
     <string name="share_receive_subtitle">שלחו אותה לעיבוד ב-Meeting Log כדי לקבל תמלול, סיכום ורשימת TO DO</string>
     <string name="share_default_title">שיחת טלפון %1$s</string>

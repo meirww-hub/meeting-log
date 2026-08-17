@@ -175,6 +175,8 @@ class RecordingService : Service() {
         // מכאן והלאה יש הקלטה שהמשתמש ביקש: הסימון על הדיסק הוא מה שיאפשר
         // לתהליך שיחזור אחרי הריגה להמשיך בדיוק לתיקייה הזו.
         RecordingSessionState.markStarted(this, sessionDir)
+        // רק בפתיחה טרייה - חידוש אחרי הריגה לא זז מהזמן האמיתי שהפגישה התחילה בו.
+        RecordingSessionState.recordStartTimeIfAbsent(this)
         isRecording = true
         acquireWakeLock()
         registerPhoneStateReceiver()
@@ -312,6 +314,10 @@ class RecordingService : Service() {
             .setOngoing(true)
             .setContentIntent(openPendingIntent)
             .addAction(0, "עצור", stopPendingIntent)
+            // שעון עצר של המערכת - מציג את משך ההקלטה גם כשהמסך כבוי או
+            // האפליקציה סגורה, בלי שאנחנו צריכים לרענן אותו בעצמנו.
+            .setUsesChronometer(true)
+            .setWhen(RecordingSessionState.startedAtMillis(this) ?: System.currentTimeMillis())
             .build()
     }
 

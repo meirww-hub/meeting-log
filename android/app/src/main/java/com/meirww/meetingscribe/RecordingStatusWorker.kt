@@ -60,11 +60,11 @@ class RecordingStatusWorker(appContext: Context, params: WorkerParameters) :
 
         val body = try {
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return giveUpOrRetry()
+                if (!response.isSuccessful) return giveUpOrRetry(recordingId, label)
                 response.body?.string().orEmpty()
             }
         } catch (e: Exception) {
-            return giveUpOrRetry()
+            return giveUpOrRetry(recordingId, label)
         }
 
         val status = Regex("\"status\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
@@ -79,10 +79,20 @@ class RecordingStatusWorker(appContext: Context, params: WorkerParameters) :
                 NotificationHelper.notifyRecordingFailed(applicationContext, recordingId, label)
                 Result.success()
             }
-            else -> giveUpOrRetry()
+            else -> giveUpOrRetry(recordingId, label)
         }
     }
 
-    private fun giveUpOrRetry(): Result =
-        if (runAttemptCount >= MAX_ATTEMPTS) Result.failure() else Result.retry()
+    /**
+     * בדרך כלל השרת עצמו מזהה הקלטה תקועה תוך חצי שעה ומעביר אותה ל-"error"
+     * (ראה recover_stale_recordings), וזה נכנס למסלול הרגיל למעלה. אבל
+     * הבדיקה הזו רצה רק כשהאפליקציה נפתחת - אם זה לא קורה תוך זמן סביר,
+     * עדיף להודיע ש"עדיין לא ידוע" מאשר לוותר אחרי MAX_ATTEMPTS בשקט גמור,
+     * בדיוק כמו שקרה בפועל ב-2026-08-16.
+     */
+    private fun giveUpOrRetry(recordingId: String, label: String): Result {
+        if (runAttemptCount < MAX_ATTEMPTS) return Result.retry()
+        NotificationHelper.notifyRecordingStatusUnknown(applicationContext, recordingId, label)
+        return Result.failure()
+    }
 }

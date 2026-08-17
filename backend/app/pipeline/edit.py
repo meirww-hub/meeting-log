@@ -28,6 +28,25 @@ from app.services import drive, firestore_store
 _MAX_AUTO_DELETE_DURATION_SECONDS = 300
 _AUTO_DELETE_MIN_AGE = datetime.timedelta(hours=48)
 
+# הסטטוסים שביניהם הקלטה עוברת בדרך ל-"done" - ראה recover_stale_recordings.
+# משותף עם main.py._RESUMABLE_STATUSES מבחינת השלבים המוקדמים, אבל כולל גם
+# "saving_to_drive": שם זה כן שייך - תהליך שנהרג באמצע השלב הזה נשאר תקוע
+# בדיוק כמו כל שלב אחר, גם אם ריצה חדשה מאותה נקודה הייתה יוצרת כפילות.
+_NONTERMINAL_STATUSES = (
+    "queued", "transcribing", "identifying_speakers", "summarizing", "saving_to_drive",
+)
+
+# כמה זמן מותר להקלטה להישאר בסטטוס ביניים לפני שרואים בה תקועה.
+#
+# תהליך שהומת מבחוץ (Cloud Run שחרג ממכסת זיכרון, כפי שקרה בפועל
+# ב-2026-08-16 - ראה transcription.py) לא זורק חריגה שמנגנון הניסיון החוזר
+# ב-main.py יכול לתפוס; הוא פשוט נעלם, וההקלטה נשארת קפואה לנצח בלי סימן.
+# 30 דקות נדיבות בהרבה מזמן העיבוד הרגיל (דקה-שתיים לשיחה, ראה
+# RecordingStatusWorker.kt), אבל עדיין קצרות בהרבה ממגבלת ה-timeout של
+# הבקשה עצמה בענן (שעה) - כך שהקלטה שעדיין מעבדת פגישה ארוכה וחריגה באמת
+# לא תסומן בטעות כתקועה.
+_STALE_PROCESSING_THRESHOLD = datetime.timedelta(minutes=30)
+
 
 def _transcript_to_text(segments: list[dict]) -> str:
     return "\n\n".join(f"{s['speaker_label']}:\n{s['text']}" for s in segments)
@@ -195,3 +214,29 @@ def cleanup_expired_recordings(user_id: str) -> list[str]:
         delete_recording(recording_id, candidate)
         deleted_ids.append(recording_id)
     return deleted_ids
+
+
+def recover_stale_recordings(user_id: str) -> list[str]:
+    """מסמן כ"error" הקלטות שנתקעו בסטטוס ביניים - ראה _STALE_PROCESSING_THRESHOLD.
+
+    זו הפעולה היחידה שאפשרית מכאן: האודיו המקורי כבר לא קיים בשרת (נמחק אחרי
+    ההעלאה, ותיקיית /tmp לא שורדת בין מופעים של Cloud Run בכל מקרה). מעבר
+    ל"error" לא משחזר את העיבוד - הוא מה שהופך את ההקלטה לגלויה בהיסטוריה
+    (ראה firestore_store._VISIBLE_STATUSES) ומאפשר את כפתור "נסה שוב" הקיים:
+    לשיחת טלפון יש עדיין מקור אצל cally (CallImportWorker.retryFromCally),
+    להקלטה רגילה אין - ואז הכפתור עצמו כבר יודע להגיד "אין אודיו לנסות שוב".
+    מחזיר את רשימת ה-IDs שסומנו.
+    """
+    stale = firestore_store.list_stale_recordings(
+        user_id, _NONTERMINAL_STATUSES, _STALE_PROCESSING_THRESHOLD
+    )
+    recovered_ids = []
+    for candidate in stale:
+        recording_id = candidate["recording_id"]
+        stuck_status = candidate.get("status", "?")
+        firestore_store.set_recording_status(
+            recording_id, user_id, "error",
+            error=f"העיבוד נעצר באמצע ({stuck_status}) - כנראה עומס זמני בשרת. נסו שוב.",
+        )
+        recovered_ids.append(recording_id)
+    return recovered_ids

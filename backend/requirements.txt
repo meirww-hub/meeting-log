@@ -16,7 +16,9 @@ requests==2.32.3
 
 google-genai==1.15.0
 
-# --- שלב 2: זיהוי דוברים (pyannote.audio) ---
-# מותקן בנפרד כי הוא כבד (torch) - יופעל כשנגיע לשלב 2
-# torch
-# pyannote.audio==3.3.2
+# --- שלב 2: זיהוי דוברים ---
+# טביעת-קול דרך ONNX Runtime בלבד (לא torch/pyannote.audio - הוחלפו כי הם
+# כבדים מדי לקונטיינר). המודל עצמו (wespeaker ResNet34) יורד ב-Dockerfile,
+# לא כאן.
+sherpa-onnx==1.13.5
+numpy==2.2.6

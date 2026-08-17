@@ -167,15 +167,11 @@ object RecordingRecovery {
                 parts.forEach { it.delete() }
             }
 
-            // הקלטה קצרה מהסף לא נשלחת לעיבוד כלל (ראה AudioDuration). המדידה
-            // נעשית על הקבצים המאוחדים - כלומר בדיוק על מה שהיה נשלח - ועל
-            // כולם יחד, כדי שפגישה ארוכה שהתפצלה לא תיפסל בגלל חלק אחרון קצר.
-            if (AudioDuration.isShorterThanMinimum(AudioDuration.totalSeconds(mergedFiles))) {
-                Log.i(TAG, "prepareAndEnqueue: ${sessionDir.name} is under the minimum length, dropped")
-                sessionDir.deleteRecursively()
-                NotificationHelper.notifyRecordingTooShort(context)
-                continue
-            }
+            // בכוונה אין כאן סף אורך מזערי: הקלטת פגישה שהמשתמש הפעיל דרך
+            // כפתור ההקלטה באפליקציה מעובדת תמיד, לא משנה כמה זמן היא הייתה.
+            // זה שונה מייבוא שיחה מ-cally ([CallImportWorker]) ומשיתוף קובץ
+            // מבחוץ ([ShareReceiveActivity]), ששניהם עדיין בודקים מול
+            // AudioDuration.MIN_PROCESSING_SECONDS - שם הסינון נשאר כפי שהיה.
 
             val baseTitle = runCatching { File(sessionDir, TITLE_NAME).readText().trim() }
                 .getOrDefault("")

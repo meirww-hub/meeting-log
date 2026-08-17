@@ -55,7 +55,9 @@ class RecordingsAdapter(
         } else {
             holder.duration.visibility = View.GONE
         }
-        val parts = mutableListOf(item.date.toDisplayDate())
+        val dateLabel = item.createdAt.toDisplayTime()?.let { "${item.date.toDisplayDate()}  $it" }
+            ?: item.date.toDisplayDate()
+        val parts = mutableListOf(dateLabel)
         if (item.speakers.isNotEmpty()) parts.add(item.speakers.joinToString(", "))
         parts.add(statusLabel)
         if (item.attachments.isNotEmpty()) {

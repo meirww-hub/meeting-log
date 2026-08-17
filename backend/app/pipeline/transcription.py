@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.models import TranscriptSegment
+from app.pipeline import speaker_embedding
 from app.pipeline._retry import call_with_retry
 
 from app.pipeline._model import GEMINI_MAX_OUTPUT_TOKENS as _MAX_OUTPUT_TOKENS
@@ -103,6 +104,53 @@ class IncompleteTranscriptError(RuntimeError):
     """
 
 
+class HallucinatedTranscriptError(RuntimeError):
+    """התמלול מכיל טקסט, אבל קטעי הדיבור הארוכים ביותר בו שקטים בפועל
+    באודיו - סימן שהמודל "המציא" שיחה סבירה במקום לדווח שאין מה לתמלל
+    (למשל מיקרופון שלא תפס כלום, או קובץ פגום).
+
+    נמצא ב-2026-08-17: הקלטה אמיתית (לא בדיקה) נשמרה כ"done" עם תמלול
+    ודוברים פיקטיביים - כולל פרופיל דובר שהצביע לרגע שקט לגמרי באודיו,
+    ולכן לא השמיע כלום במסך "דוברים לא מזוהים". בלי הבדיקה הזו אין שום
+    סימן שהתמלול לא באמת קרה. כישלון גלוי כאן מגיע להיסטוריה ולניסיון
+    חוזר, בדיוק כמו IncompleteTranscriptError.
+    """
+
+
+# כמה מהקטעים הארוכים ביותר בודקים בפועל מול האודיו - תקרה, לא רצפה
+# (כמו _MAX_SAMPLE_SEGMENTS ב-speaker_id.py): מספיק כדי לא להיתפס על קטע
+# בודד שנחתך בטעות על רעש, בלי לפענח את כל ההקלטה בשביל הבדיקה.
+_MAX_SILENCE_CHECK_SEGMENTS = 3
+
+# קטע קצר מזה לא נבדק: RMS על פחות משנייה וחצי רועש מדי כדי להבחין בין
+# שקט לדיבור קצר, ואין טעם לתפוס עליו הקלטה אמיתית.
+_MIN_SILENCE_CHECK_SECONDS = 1.5
+
+
+def _verify_segments_are_audible(
+    segments: list[TranscriptSegment], audio_path: str
+) -> None:
+    """זורק HallucinatedTranscriptError אם כל הקטעים הארוכים שנבדקו שקטים
+    בפועל באודיו. דורש שכולם יהיו שקטים (לא רוב) - מספיק קטע ארוך אחד עם
+    אנרגיית שמע אמיתית כדי לבטוח בשאר התמלול; זה שומר את קצב הפספוסים
+    השווא נמוך, גם על הקלטה אמיתית שקטה בחלקה."""
+    ranked = sorted(
+        (s for s in segments if s.end_seconds - s.start_seconds >= _MIN_SILENCE_CHECK_SECONDS),
+        key=lambda s: s.end_seconds - s.start_seconds,
+        reverse=True,
+    )[:_MAX_SILENCE_CHECK_SEGMENTS]
+    if not ranked:
+        return
+    if all(
+        speaker_embedding.segment_is_silent(audio_path, s.start_seconds, s.end_seconds)
+        for s in ranked
+    ):
+        raise HallucinatedTranscriptError(
+            f"{len(ranked)} מהקטעים הארוכים ביותר בתמלול שקטים בפועל באודיו - "
+            "כנראה תמלול מדומיין על הקלטה שקטה/פגומה"
+        )
+
+
 def _mime_type_for(audio_path: str) -> str:
     guessed, _ = mimetypes.guess_type(audio_path)
     return guessed or "audio/mp4"
@@ -167,14 +215,23 @@ def _transcribe_in_full(
     schema_hint: str,
     response_schema,
     speaker_tail: bool,
+    client: genai.Client | None = None,
 ) -> list[dict]:
     """מתמלל קובץ שלם, גם כשהתשובה לא נכנסת לבקשה אחת.
 
     כל עוד המודל נקטע באמצע, נשלחת בקשת המשך שמתחילה מהשנייה שאליה הגיע
     התמלול עד כה - במקום להיכשל ולאבד את ההקלטה, או להחזיר אותה חתוכה בשקט.
     הקובץ מועלה פעם אחת בלבד ומשמש את כל הסבבים.
+
+    [client] מאפשר לקרוא לפונקציה הזו כמה פעמים על אותו לקוח קיים במקום
+    ליצור חדש בכל קריאה - ראה transcribe_single_channel: שיחת טלפון קוראת
+    לה פעמיים ברצף (ערוץ שלי, ערוץ שני), ושני client-ים חיים בו-זמנית בתוך
+    אותה בקשה (ל-genai.Client אין close() ציבורי, אז ה-httpx client שמתחתיו
+    לא משתחרר עד שה-GC מגיע אליו) הוא בדיוק מה שחרג ממכסת הזיכרון של
+    Cloud Run והפיל הקלטה שלמה ב-2026-08-16 (מכסה 512MiB, שימוש בפועל
+    671MiB, 47 שניות אחרי תחילת התמלול).
     """
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = client or genai.Client(api_key=settings.gemini_api_key)
     uploaded_file = client.files.upload(
         file=audio_path,
         config=types.UploadFileConfig(mime_type=_mime_type_for(audio_path)),
@@ -246,7 +303,7 @@ def _transcribe_in_full(
 
 
 def transcribe_with_diarization(
-    audio_path: str, max_speakers: int = 6
+    audio_path: str, max_speakers: int = 6, client: genai.Client | None = None
 ) -> list[TranscriptSegment]:
     items = _transcribe_in_full(
         audio_path=audio_path,
@@ -254,9 +311,10 @@ def transcribe_with_diarization(
         schema_hint=_SCHEMA_HINT.format(language_rule=_LANGUAGE_RULE),
         response_schema=list[_DiarizedSegment],
         speaker_tail=True,
+        client=client,
     )
 
-    return [
+    segments = [
         TranscriptSegment(
             speaker_label=f"דובר {item['speaker_tag']}",
             speaker_tag=item["speaker_tag"],
@@ -267,6 +325,8 @@ def transcribe_with_diarization(
         for item in items
         if str(item.get("text", "")).strip()
     ]
+    _verify_segments_are_audible(segments, audio_path)
+    return segments
 
 
 _SINGLE_CHANNEL_SYSTEM_PROMPT = """\
@@ -286,13 +346,20 @@ _SINGLE_CHANNEL_SCHEMA_HINT = """\
 
 
 def transcribe_single_channel(
-    audio_path: str, speaker_label: str, speaker_tag: int
+    audio_path: str,
+    speaker_label: str,
+    speaker_tag: int,
+    client: genai.Client | None = None,
 ) -> list[TranscriptSegment]:
     """תמלול ערוץ מבודד של דובר יחיד (צד אחד בשיחת טלפון).
 
     כשההקלטה מגיעה משני ערוצים נפרדים, ההפרדה בין הדוברים כבר קיימת ברמת
     הקובץ - ולכן אין צורך ב-diarization, וזיהוי הדובר יוצא ודאי במקום
     ניחוש לפי מאפייני קול (ראה transcribe_with_diarization לעומת זאת).
+
+    [client] - ראה _transcribe_in_full: שיחת טלפון קוראת לפונקציה הזו
+    פעמיים ברצף (ערוץ שלי, ערוץ שני), ו-process_call_recording מעביר לשתי
+    הקריאות את אותו לקוח כדי שרק חיבור HTTP אחד יהיה חי בו-זמנית.
     """
     items = _transcribe_in_full(
         audio_path=audio_path,
@@ -300,9 +367,10 @@ def transcribe_single_channel(
         schema_hint=_SINGLE_CHANNEL_SCHEMA_HINT.format(language_rule=_LANGUAGE_RULE),
         response_schema=list[_SingleChannelSegment],
         speaker_tail=False,
+        client=client,
     )
 
-    return [
+    segments = [
         TranscriptSegment(
             speaker_label=speaker_label,
             speaker_tag=speaker_tag,
@@ -313,3 +381,5 @@ def transcribe_single_channel(
         for item in items
         if str(item.get("text", "")).strip()
     ]
+    _verify_segments_are_audible(segments, audio_path)
+    return segments

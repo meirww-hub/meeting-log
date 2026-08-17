@@ -1,5 +1,7 @@
 package com.meirww.meetingscribe
 
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -47,6 +49,8 @@ data class RecordingItem(
      */
     val audioChannelCount: Int,
     val note: String?,
+    /** זמן ההגעה לשרת (ISO 8601 עם offset, כפי שנשמר ב-Firestore) - לשעה שמוצגת ליד התאריך בהיסטוריה. */
+    val createdAt: String?,
     /**
      * הקלטה שהעיבוד שלה נכשל. עד 2026-08-13 הרשימה כללה "done" בלבד, ולכן
      * הקלטה כזו פשוט לא הופיעה - שיחה שלמה נעלמה בלי שאיש ידע שהיא הגיעה
@@ -94,6 +98,7 @@ data class RecordingItem(
                     else -> 0
                 },
                 note = obj.optStringOrNull("note"),
+                createdAt = obj.optStringOrNull("created_at"),
                 failed = failed,
                 error = obj.optStringOrNull("error"),
                 attachments = attachments,
@@ -122,6 +127,21 @@ internal fun JSONObject.optDoubleOrNull(key: String): Double? =
 fun String.toDisplayDate(): String {
     val parts = split("-")
     return if (parts.size == 3) "${parts[2]}/${parts[1]}/${parts[0]}" else this
+}
+
+/**
+ * שעת ההקלטה (HH:mm לפי שעון המכשיר) מתוך created_at, שנשמר ב-Firestore
+ * ב-UTC. null אם אין ערך או שהפורמט לא תקין (הקלטות מאוד ישנות).
+ */
+fun String?.toDisplayTime(): String? {
+    if (this.isNullOrBlank()) return null
+    return try {
+        OffsetDateTime.parse(this)
+            .atZoneSameInstant(java.time.ZoneId.systemDefault())
+            .format(DateTimeFormatter.ofPattern("HH:mm"))
+    } catch (e: Exception) {
+        null
+    }
 }
 
 /** גרסה מקוצרת (DD/MM) לשימוש במקומות צרים כמו שבבי הבחירה בצ'אט. */

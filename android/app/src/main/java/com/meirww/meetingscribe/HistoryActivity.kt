@@ -33,6 +33,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class HistoryActivity : AppCompatActivity() {
 
@@ -44,7 +45,16 @@ class HistoryActivity : AppCompatActivity() {
     private enum class SortMode { NEWEST, OLDEST, TITLE }
 
     private lateinit var binding: ActivityHistoryBinding
-    private val client = OkHttpClient()
+
+    // ה-Backend רץ על Cloud Run עם min-instances=0 (ראה
+    // project_meetinglog_stuck_recordings_incident) - בקשה ראשונה אחרי חוסר
+    // פעילות מעירה מופע קר, וברירת המחדל של OkHttp (10 שניות) קצרה מדי לזה:
+    // עריכת דובר/מחיקה נכשלת בשקט בפעם הראשונה ומצליחה בשנייה כשהמופע כבר חם.
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
     private val adapter = RecordingsAdapter(
         onOpenLink = ::openUrl,
         onMenuClick = ::showItemMenu,

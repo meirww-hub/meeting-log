@@ -9,17 +9,34 @@
 
     <TextView
         android:id="@+id/headerText"
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:text="@string/app_name"
         android:textColor="@color/text_primary"
         android:textSize="30sp"
         android:textStyle="bold"
         android:letterSpacing="0.02"
+        android:maxLines="1"
+        android:ellipsize="end"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="12dp" />
+        app:layout_constraintEnd_toStartOf="@id/themeToggleButton"
+        android:layout_marginTop="12dp"
+        android:layout_marginEnd="12dp" />
+
+    <ImageView
+        android:id="@+id/themeToggleButton"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:src="@drawable/ic_moon"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="@string/history_toggle_theme"
+        app:layout_constraintTop_toTopOf="@id/headerText"
+        app:layout_constraintBottom_toBottomOf="@id/headerText"
+        app:layout_constraintEnd_toStartOf="@id/unidentifiedSpeakersButton"
+        android:layout_marginEnd="16dp" />
 
     <ImageView
         android:id="@+id/historyButton"
@@ -46,6 +63,20 @@
         app:layout_constraintTop_toTopOf="@id/headerText"
         app:layout_constraintBottom_toBottomOf="@id/headerText"
         app:layout_constraintEnd_toStartOf="@id/historyButton"
+        android:layout_marginEnd="16dp" />
+
+    <ImageView
+        android:id="@+id/unidentifiedSpeakersButton"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:src="@drawable/ic_person"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="@string/unidentified_speakers_title"
+        app:layout_constraintTop_toTopOf="@id/headerText"
+        app:layout_constraintBottom_toBottomOf="@id/headerText"
+        app:layout_constraintEnd_toStartOf="@id/chatButton"
         android:layout_marginEnd="16dp" />
 
     <TextView
@@ -93,6 +124,21 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintVertical_bias="0.5" />
+
+    <TextView
+        android:id="@+id/timerText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="00:00"
+        android:textColor="@color/record_active"
+        android:textSize="40sp"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/statusText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="6dp" />
 
     <TextView
         android:id="@+id/statusText"

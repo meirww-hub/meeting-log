@@ -68,3 +68,10 @@ class RecordingUpdateRequest(BaseModel):
     # במפתחות המילון משתנות, שאר הדוברים נשארים כפי שהיו.
     speaker_renames: dict[str, str] | None = None
     note: str | None = None
+
+
+class SpeakerProfileUpdateRequest(BaseModel):
+    """גוף בקשת PATCH /speaker-profiles/{id} - תיוג פרופיל דובר לא-מזוהה
+    בשם, ממסך "דוברים לא מזוהים" באפליקציה (ראה pipeline/speaker_id.py)."""
+
+    name: str

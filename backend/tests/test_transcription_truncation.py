@@ -99,6 +99,9 @@ def fake_gemini(monkeypatch):
             self.models = _FakeModels()
 
     monkeypatch.setattr(transcription.genai, "Client", _FakeClient)
+    # הבדיקות כאן על היגיון הקטיעה/ההמשך בלבד - לא על בדיקת השקט (ראה
+    # test_transcription_silence.py), ואין להן קובץ אודיו אמיתי ל-ffmpeg.
+    monkeypatch.setattr(transcription.speaker_embedding, "segment_is_silent", lambda *a: False)
     return type("Fake", (), {"calls": calls, "responses": responses})()
 
 

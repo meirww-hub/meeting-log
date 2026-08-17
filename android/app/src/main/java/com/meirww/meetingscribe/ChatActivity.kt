@@ -31,6 +31,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class ChatActivity : AppCompatActivity() {
 
@@ -42,7 +43,15 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private lateinit var binding: ActivityChatBinding
-    private val client = OkHttpClient()
+
+    // כמו ב-HistoryActivity: Cloud Run רץ עם min-instances=0, אז בקשה אחרי
+    // חוסר פעילות מעירה מופע קר. readTimeout ארוך יותר מהרגיל כי /chat היא
+    // תשובת Gemini מלאה (לא סטרימינג) שיכולה לקחת זמן גם כשהמופע כבר חם.
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
     private val adapter = ChatAdapter(onPlayRequest = ::requestPlayback)
     private val messages = mutableListOf<ChatMessage>()
 

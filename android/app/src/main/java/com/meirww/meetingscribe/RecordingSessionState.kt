@@ -23,6 +23,7 @@ object RecordingSessionState {
     private const val KEY_USER_STARTED = "user_started"
     private const val KEY_SESSION_DIR = "session_dir"
     private const val KEY_ALIVE_AT = "alive_at"
+    private const val KEY_STARTED_AT = "started_at"
 
     /**
      * כמה זמן הקלטה נחשבת חיה בלי דופק. חידוש אחרי הריגת תהליך קורה תוך
@@ -57,8 +58,23 @@ object RecordingSessionState {
             .remove(KEY_USER_STARTED)
             .remove(KEY_SESSION_DIR)
             .remove(KEY_ALIVE_AT)
+            .remove(KEY_STARTED_AT)
             .commit()
     }
+
+    /**
+     * זמן תחילת הפגישה בפועל - נכתב פעם אחת בלבד ולא זז בחידוש אחרי הריגת
+     * תהליך, כדי שטיימר במסך ובהתראה ימשיך לרוץ מהזמן האמיתי ולא יתאפס.
+     */
+    fun recordStartTimeIfAbsent(context: Context) {
+        val prefs = prefs(context)
+        if (prefs.contains(KEY_STARTED_AT)) return
+        prefs.edit().putLong(KEY_STARTED_AT, System.currentTimeMillis()).commit()
+    }
+
+    /** null כשאין הקלטה פעילה שכבר נרשם לה זמן התחלה. */
+    fun startedAtMillis(context: Context): Long? =
+        prefs(context).getLong(KEY_STARTED_AT, -1L).takeIf { it > 0 }
 
     fun userStarted(context: Context): Boolean =
         prefs(context).getBoolean(KEY_USER_STARTED, false)

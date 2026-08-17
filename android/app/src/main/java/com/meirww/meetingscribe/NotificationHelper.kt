@@ -30,6 +30,11 @@ object NotificationHelper {
     /** ראה [notifyRecordingTooShort] - התראה יחידה שמתעדכנת, לא ערימה. */
     private const val TOO_SHORT_NOTIFICATION_ID = 9101
 
+    /** ראה [notifyShizukuUnavailable] - התראה יחידה שמתעדכנת, לא ערימה. */
+    private const val SHIZUKU_UNAVAILABLE_NOTIFICATION_ID = 9102
+
+    private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
+
     private fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(CHANNEL_ID) != null) return
@@ -50,7 +55,14 @@ object NotificationHelper {
         manager.createNotificationChannel(channel)
     }
 
-    private fun notify(context: Context, id: Int, contentTitle: String, contentText: String) {
+    private fun notify(
+        context: Context,
+        id: Int,
+        contentTitle: String,
+        contentText: String,
+        openIntent: Intent = Intent(context, HistoryActivity::class.java)
+            .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+    ) {
         ensureChannel(context)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -58,8 +70,6 @@ object NotificationHelper {
             != PackageManager.PERMISSION_GRANTED
         ) return
 
-        val openIntent = Intent(context, HistoryActivity::class.java)
-            .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val pendingIntent = PendingIntent.getActivity(
             context, id, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -109,6 +119,45 @@ object NotificationHelper {
             context, recordingId.hashCode(),
             "עיבוד ההקלטה נכשל",
             "$what - פתחו את ההיסטוריה כדי לנסות שוב"
+        )
+    }
+
+    /**
+     * ה-worker שבודק סטטוס ויתר אחרי הרבה ניסיונות בלי לקבל "done" או
+     * "error" - בדרך כלל השרת כבר יזהה הקלטה תקועה בעצמו ויסמן אותה
+     * "error" (ראה recover_stale_recordings), אבל זה תלוי שהאפליקציה
+     * תיפתח. עדיף "עדיין לא ידוע" מאשר שתיקה מוחלטת אחרי שהמשתמש חיכה
+     * שעות, כמו שקרה בפועל ב-2026-08-16.
+     */
+    fun notifyRecordingStatusUnknown(context: Context, recordingId: String, label: String) {
+        val what = label.ifBlank { "ההקלטה" }
+        notify(
+            context, recordingId.hashCode(),
+            "עדיין אין עדכון על ההקלטה",
+            "$what - פתחו את האפליקציה כדי לבדוק את הסטטוס"
+        )
+    }
+
+    /**
+     * Shizuku לא פעיל - ייבוא שיחות אוטומטי מהטלפון מושבת, ושיחות חדשות
+     * לא ייכנסו להיסטוריה בלי שום סימן אחר. ראה ShizukuAccess.notifyOutageOnce
+     * לגבי מתי זו נשלחת.
+     *
+     * הקישור פותח את Shizuku עצמה (לא את ההיסטוריה, כמו ברוב ההתראות) -
+     * זו הפעולה שהמשתמש צריך לעשות: לפתוח שם ולהקיש Start.
+     */
+    fun notifyShizukuUnavailable(context: Context) {
+        val launchShizuku = context.packageManager
+            .getLaunchIntentForPackage(SHIZUKU_PACKAGE)
+            ?.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ?: Intent(context, HistoryActivity::class.java)
+                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        notify(
+            context, SHIZUKU_UNAVAILABLE_NOTIFICATION_ID,
+            "ייבוא שיחות מושבת",
+            "Shizuku לא פעיל - פתחו אותו והקישו Start כדי לחדש את הייבוא האוטומטי",
+            launchShizuku,
         )
     }
 }
