@@ -315,11 +315,12 @@ def identify_speakers(
     חומר יש טביעת קול אמינה יותר, ולכן זכות הראשונים על פרופיל שגם דובר
     אחר בהקלטה דומה לו (ראה _best_match / taken).
 
-    "אני" תמיד ודאי (ראה pipeline.py) ולא עובר כאן בכלל.
+    "מאיר" (ערוץ ה-uplink בשיחת טלפון) תמיד ודאי (ראה pipeline.py) ולא עובר
+    כאן בכלל.
     """
     by_label: dict[str, list[TranscriptSegment]] = {}
     for segment in segments:
-        if segment.speaker_label == "אני":
+        if segment.speaker_label == "מאיר":
             continue
         by_label.setdefault(segment.speaker_label, []).append(segment)
 

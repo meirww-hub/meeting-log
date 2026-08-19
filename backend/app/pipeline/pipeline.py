@@ -83,7 +83,7 @@ def process_call_recording(
     # השני כבר נפתח) הוא מה שחרג ממכסת הזיכרון של Cloud Run והפיל הקלטה
     # שלמה ב-2026-08-16. ראה transcription.py.
     gemini_client = genai.Client(api_key=settings.gemini_api_key)
-    mine = transcribe_single_channel(uplink_path, "אני", 1, client=gemini_client)
+    mine = transcribe_single_channel(uplink_path, "מאיר", 1, client=gemini_client)
     theirs = transcribe_single_channel(
         downlink_path, other_label, 2, client=gemini_client
     )
@@ -140,11 +140,11 @@ def _resolve_speaker_names(
 ) -> dict[str, str]:
     """מסנן את השמות שזוהו מתוך תוכן השיחה לכאלה שמותר להחיל בפועל.
 
-    "אני" תמיד ודאי, ותווית שהגיעה מרשימת אנשי הקשר של הטלפון נעולה גם
-    היא - שתיהן ידועות בוודאות מחוץ לאודיו, ולכן ניחוש של המודל מתוך
-    ההקלטה לא מורשה לדרוס אותן.
+    "מאיר" (ערוץ ה-uplink בשיחת טלפון) תמיד ודאי, ותווית שהגיעה מרשימת
+    אנשי הקשר של הטלפון נעולה גם היא - שתיהן ידועות בוודאות מחוץ לאודיו,
+    ולכן ניחוש של המודל מתוך ההקלטה לא מורשה לדרוס אותן.
     """
-    blocked = {"אני"} | locked_labels
+    blocked = {"מאיר"} | locked_labels
     present = {s.speaker_label for s in segments}
     return {
         label: name

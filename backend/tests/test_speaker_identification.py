@@ -217,13 +217,13 @@ class TestIdentifySpeakers:
         assert [s.speaker_label for s in segments] == ["דנה", "דנה"]
 
     def test_me_is_never_sent_through_voice_matching(self, store, monkeypatch):
-        segments = _segs([("אני", "שלום, זו אני מדברת")])
+        segments = _segs([("מאיר", "שלום, זו אני מדברת")])
         monkeypatch.setattr(
             speaker_embedding, "analyze_segment",
-            lambda *a: pytest.fail("אסור לחשב embedding בשביל 'אני'"),
+            lambda *a: pytest.fail("אסור לחשב embedding בשביל 'מאיר'"),
         )
         speaker_id.identify_speakers(segments, "u1", "rec1", "audio.m4a")
-        assert segments[0].speaker_label == "אני"
+        assert segments[0].speaker_label == "מאיר"
         assert store.list_speaker_profiles("u1") == []
 
     def test_unmatched_speaker_keeps_the_generic_label_but_opens_a_profile(self, store, monkeypatch):

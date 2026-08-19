@@ -1,15 +1,10 @@
 package com.meirww.meetingscribe
 
-import android.Manifest
-import android.content.ActivityNotFoundException
-import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.os.Bundle
-import android.speech.RecognizerIntent
 import android.view.View
 import android.widget.SeekBar
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -30,7 +25,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class ChatActivity : AppCompatActivity() {
@@ -74,26 +68,6 @@ class ChatActivity : AppCompatActivity() {
     /** ההקלטה שכרגע טעונה בנגן - הקשה נוספת עליה היא קפיצה, לא טעינה. */
     private var loadedRecordingId: String? = null
 
-    private val speechRecognizerLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val spokenText = result.data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()
-            if (!spokenText.isNullOrBlank()) {
-                val existing = binding.questionInput.text?.toString().orEmpty()
-                val combined = if (existing.isBlank()) spokenText else "$existing $spokenText"
-                binding.questionInput.setText(combined)
-                binding.questionInput.setSelection(combined.length)
-            }
-        }
-
-    private val requestMicPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) startVoiceInput() else {
-                Toast.makeText(this, R.string.chat_voice_permission_needed, Toast.LENGTH_SHORT).show()
-            }
-        }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityChatBinding.inflate(layoutInflater)
@@ -104,7 +78,6 @@ class ChatActivity : AppCompatActivity() {
 
         binding.backButton.setOnClickListener { finish() }
         binding.sendButton.setOnClickListener { sendQuestion() }
-        binding.micButton.setOnClickListener { ensureMicPermissionAndListen() }
         binding.selectionCard.setOnClickListener { openRecordingPicker() }
 
         setUpPlayerControls()
@@ -116,29 +89,6 @@ class ChatActivity : AppCompatActivity() {
     override fun onDestroy() {
         player.release()
         super.onDestroy()
-    }
-
-    private fun ensureMicPermissionAndListen() {
-        val hasPermission = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-
-        if (hasPermission) startVoiceInput() else {
-            requestMicPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
-
-    private fun startVoiceInput() {
-        val intent = android.content.Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale("he", "IL"))
-            putExtra(RecognizerIntent.EXTRA_PROMPT, getString(R.string.chat_voice_input))
-        }
-        try {
-            speechRecognizerLauncher.launch(intent)
-        } catch (e: ActivityNotFoundException) {
-            Toast.makeText(this, R.string.chat_voice_unavailable, Toast.LENGTH_SHORT).show()
-        }
     }
 
     private fun loadRecordings() {

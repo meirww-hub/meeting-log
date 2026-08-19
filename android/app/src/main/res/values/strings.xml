@@ -96,9 +96,6 @@
     <string name="chat_send">שלח</string>
     <string name="chat_no_selection">בחרו לפחות הקלטה אחת לפני ששואלים</string>
     <string name="chat_error">שגיאה בקבלת תשובה, נסו שוב</string>
-    <string name="chat_voice_input">שאלה בקול</string>
-    <string name="chat_voice_unavailable">זיהוי דיבור אינו זמין במכשיר זה</string>
-    <string name="chat_voice_permission_needed">נדרשת הרשאת מיקרופון כדי לשאול בקול</string>
 
     <!-- שורת מקור מתחת לתשובה: עם משולש ניגון כשאפשר להקיש ולשמוע -->
     <string name="chat_citation_playable">▶  %1$s · %2$s</string>

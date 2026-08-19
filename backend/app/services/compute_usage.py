@@ -52,7 +52,7 @@ def _month_to_date_billable_seconds(token: str) -> float:
             "filter": (
                 'metric.type="run.googleapis.com/container/billable_instance_time" '
                 'resource.type="cloud_run_revision" '
-                'resource.label."service_name"="meeting-log-backend"'
+                'resource.labels.service_name="meeting-log-backend"'
             ),
             "interval.startTime": start.isoformat(),
             "interval.endTime": now.isoformat(),

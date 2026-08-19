@@ -164,8 +164,8 @@ class TestNamesIdentifiedFromTheConversation:
         assert renames == {}
 
     def test_self_label_is_never_renamed(self):
-        segments = _segs([("אני", "שלום")])
-        assert _resolve_speaker_names(segments, {"אני": "מאיר"}, set()) == {}
+        segments = _segs([("מאיר", "שלום")])
+        assert _resolve_speaker_names(segments, {"מאיר": "מאיר כהן"}, set()) == {}
 
     def test_label_absent_from_transcript_is_ignored(self):
         segments = _segs([("דובר 1", "שלום")])
