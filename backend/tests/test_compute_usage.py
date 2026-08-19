@@ -27,6 +27,7 @@ class _FakeResponse:
     def __init__(self, json_data, status_code=200):
         self._json = json_data
         self.status_code = status_code
+        self.text = str(json_data)
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -95,10 +96,12 @@ def test_sums_points_across_series_and_computes_percent(monkeypatch, fake_auth):
 
 def test_raises_on_monitoring_error_response(monkeypatch, fake_auth):
     monkeypatch.setattr(
-        compute_usage.requests, "get", lambda *a, **k: _FakeResponse({}, status_code=403)
+        compute_usage.requests,
+        "get",
+        lambda *a, **k: _FakeResponse({"error": {"message": "denied"}}, status_code=403),
     )
 
-    with pytest.raises(compute_usage.requests.HTTPError):
+    with pytest.raises(RuntimeError, match="denied"):
         compute_usage.publish_free_tier_usage_metric()
 
 
