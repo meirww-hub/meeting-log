@@ -17,7 +17,7 @@ Monitoring, ולא ב-google-cloud-monitoring (חבילה כבדה) אלא ב-RE
 
 import datetime
 
-import google.auth
+import google.auth.compute_engine
 import google.auth.transport.requests
 import requests
 
@@ -29,9 +29,13 @@ _CUSTOM_METRIC_TYPE = "custom.googleapis.com/meeting_log/free_tier_usage_pct"
 
 
 def _access_token() -> str:
-    credentials, _ = google.auth.default(
-        scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
+    # לא google.auth.default(): הוא נותן קדימות ל-GOOGLE_APPLICATION_CREDENTIALS
+    # (מוגדר על הקונטיינר, ומצביע ל-service-account.json הצר של Firestore -
+    # ראה google_credentials.py) ולכן היה מתחזה כל הזמן לחשבון הלא-נכון,
+    # במקום זהות הריצה של Cloud Run (שיש לה roles/editor + roles/monitoring.
+    # viewer). compute_engine.Credentials() תמיד פונה למטא-דאטה של Cloud Run
+    # עצמו, בלי קשר למשתנה הסביבה.
+    credentials = google.auth.compute_engine.Credentials()
     credentials.refresh(google.auth.transport.requests.Request())
     return credentials.token
 

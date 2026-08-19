@@ -40,7 +40,7 @@ class _FakeResponse:
 @pytest.fixture
 def fake_auth(monkeypatch):
     monkeypatch.setattr(
-        compute_usage.google.auth, "default", lambda scopes=None: (_FakeCredentials(), None)
+        compute_usage.google.auth.compute_engine, "Credentials", lambda: _FakeCredentials()
     )
 
 
