@@ -20,6 +20,7 @@ import pytest
 
 from app.models import TranscriptSegment
 from app.pipeline import pipeline, speaker_embedding, speaker_id
+from app.pipeline.diarization import LabelVoice
 from tests.transcripts import _segs
 
 
@@ -36,18 +37,17 @@ class FakeProfileStore:
         return f"profile{self._next_id}"
 
     def create_speaker_profile(
-        self, user_id, embedding, recording_id, channel, start_seconds, name=None
+        self, user_id, embedding, sample, name=None, name_source=None
     ):
         profile_id = self._new_id()
         self.profiles[profile_id] = {
             "profile_id": profile_id,
             "user_id": user_id,
             "name": name,
+            "name_source": name_source,
             "embedding": embedding,
             "sample_count": 1,
-            "sample_recording_id": recording_id,
-            "sample_channel": channel,
-            "sample_start_seconds": start_seconds,
+            **sample,
         }
         return profile_id
 
@@ -82,9 +82,13 @@ VOICE_A_AGAIN = [0.95, 0.05]
 VOICE_B = [0.0, 1.0]
 
 
+def _sample(recording_id="rec1", channel=0, start=0.0, end=4.0):
+    return speaker_id.SpeakerSample(recording_id, channel, start, end)
+
+
 class TestEnrollKnown:
     def test_creates_a_new_named_profile(self, store):
-        speaker_id.enroll_known("u1", "דנה", VOICE_A, "rec1", 1, 0.0)
+        speaker_id.enroll_known("u1", "דנה", VOICE_A, _sample("rec1", 1, 0.0))
         profiles = store.list_speaker_profiles("u1")
         assert len(profiles) == 1
         assert profiles[0]["name"] == "דנה"
@@ -93,8 +97,8 @@ class TestEnrollKnown:
     def test_merges_into_existing_profile_with_the_same_name(self, store):
         """שיחה שנייה עם אותו איש קשר לא יוצרת פרופיל כפול - היא משפרת
         את הפרופיל הקיים."""
-        speaker_id.enroll_known("u1", "דנה", VOICE_A, "rec1", 1, 0.0)
-        speaker_id.enroll_known("u1", "דנה", VOICE_A_AGAIN, "rec2", 1, 5.0)
+        speaker_id.enroll_known("u1", "דנה", VOICE_A, _sample("rec1", 1, 0.0))
+        speaker_id.enroll_known("u1", "דנה", VOICE_A_AGAIN, _sample("rec2", 1, 5.0))
         profiles = store.list_speaker_profiles("u1")
         assert len(profiles) == 1
         assert profiles[0]["sample_count"] == 2
@@ -103,21 +107,21 @@ class TestEnrollKnown:
 
 class TestResolveOrEnroll:
     def test_no_existing_profiles_creates_unnamed_one_and_returns_none(self, store):
-        name = speaker_id.resolve_or_enroll("u1", VOICE_A, "rec1", 0, 3.0)
+        name, _ = speaker_id.resolve_or_enroll("u1", VOICE_A, _sample("rec1", 0, 3.0))
         assert name is None
         profiles = store.list_speaker_profiles("u1")
         assert len(profiles) == 1
         assert profiles[0]["name"] is None
 
     def test_matches_an_existing_named_profile_above_threshold(self, store):
-        speaker_id.enroll_known("u1", "דנה", VOICE_A, "rec1", 1, 0.0)
-        name = speaker_id.resolve_or_enroll("u1", VOICE_A_AGAIN, "rec2", 0, 10.0)
+        speaker_id.enroll_known("u1", "דנה", VOICE_A, _sample("rec1", 1, 0.0))
+        name, _ = speaker_id.resolve_or_enroll("u1", VOICE_A_AGAIN, _sample("rec2", 0, 10.0))
         assert name == "דנה"
         assert len(store.list_speaker_profiles("u1")) == 1  # מוזג, לא שוכפל
 
     def test_a_different_voice_does_not_match_and_opens_its_own_profile(self, store):
-        speaker_id.enroll_known("u1", "דנה", VOICE_A, "rec1", 1, 0.0)
-        name = speaker_id.resolve_or_enroll("u1", VOICE_B, "rec2", 0, 10.0)
+        speaker_id.enroll_known("u1", "דנה", VOICE_A, _sample("rec1", 1, 0.0))
+        name, _ = speaker_id.resolve_or_enroll("u1", VOICE_B, _sample("rec2", 0, 10.0))
         assert name is None
         assert len(store.list_speaker_profiles("u1")) == 2
 
@@ -127,9 +131,9 @@ class TestResolveOrEnroll:
         שם בפועל - עדיף להישאר "לא מזוהה" ולתת למשתמש להחליט. ה-embedding
         גם לא נצבר לתוך הפרופיל הקיים - כדי לא לזהם את טביעת הקול של "דנה"
         בדגימה שכנראה שייכת למישהי אחרת."""
-        speaker_id.enroll_known("u1", "דנה", VOICE_A, "rec1", 1, 0.0)
+        speaker_id.enroll_known("u1", "דנה", VOICE_A, _sample("rec1", 1, 0.0))
         moderate = [0.7, 0.7141428428542851]  # דמיון-קוסינוס ~0.7 מול VOICE_A
-        name = speaker_id.resolve_or_enroll("u1", moderate, "rec2", 0, 10.0)
+        name, _ = speaker_id.resolve_or_enroll("u1", moderate, _sample("rec2", 0, 10.0))
         assert name is None
         profiles = store.list_speaker_profiles("u1")
         assert len(profiles) == 2
@@ -139,15 +143,15 @@ class TestResolveOrEnroll:
     def test_the_same_unidentified_voice_accumulates_under_one_profile(self, store):
         """החלטת "מיקבוץ אחד": אותו קול לא-מזוהה שחוזר בכמה הקלטות לא
         ייצר שורה נפרדת בכל פעם במסך "דוברים לא מזוהים"."""
-        speaker_id.resolve_or_enroll("u1", VOICE_A, "rec1", 0, 1.0)
-        speaker_id.resolve_or_enroll("u1", VOICE_A_AGAIN, "rec2", 0, 2.0)
+        speaker_id.resolve_or_enroll("u1", VOICE_A, _sample("rec1", 0, 1.0))
+        speaker_id.resolve_or_enroll("u1", VOICE_A_AGAIN, _sample("rec2", 0, 2.0))
         profiles = store.list_speaker_profiles("u1")
         assert len(profiles) == 1
         assert profiles[0]["sample_count"] == 2
 
     def test_users_do_not_see_each_others_profiles(self, store):
-        speaker_id.enroll_known("u1", "דנה", VOICE_A, "rec1", 1, 0.0)
-        name = speaker_id.resolve_or_enroll("u2", VOICE_A_AGAIN, "rec2", 0, 0.0)
+        speaker_id.enroll_known("u1", "דנה", VOICE_A, _sample("rec1", 1, 0.0))
+        name, _ = speaker_id.resolve_or_enroll("u2", VOICE_A_AGAIN, _sample("rec2", 0, 0.0))
         assert name is None
 
 
@@ -160,8 +164,8 @@ class TestRepresentativeEmbedding:
         ])
         calls = []
         monkeypatch.setattr(
-            speaker_embedding, "extract_embedding",
-            lambda audio_path, start, end: calls.append((start, end)) or [1.0, 0.0],
+            speaker_embedding, "analyze_segment",
+            lambda audio_path, start, end: (calls.append((start, end)) or [1.0, 0.0], False),
         )
 
         _, sample_segment = speaker_id.representative_embedding("audio.m4a", segments)
@@ -173,44 +177,130 @@ class TestRepresentativeEmbedding:
         assert speaker_id.representative_embedding("audio.m4a", []) == (None, None)
 
     def test_all_segments_too_short_yields_nothing(self, monkeypatch):
-        monkeypatch.setattr(speaker_embedding, "extract_embedding", lambda *a: None)
+        monkeypatch.setattr(speaker_embedding, "analyze_segment", lambda *a: (None, False))
         segments = _segs([("דובר 1", "משהו")])
         assert speaker_id.representative_embedding("audio.m4a", segments) == (None, None)
+
+    def test_a_silent_segment_is_never_used_as_the_playback_pointer(self, monkeypatch):
+        """הבאג שהמשתמש דיווח עליו: "נגן" בפרופיל דובר שלא משמיע כלום.
+        המצביע נלקח מהקטע הארוך ביותר, גם כשהוא שקט בפועל באודיו - וקטע
+        שקט הוא גם טביעת קול מזוהמת וגם דגימה אילמת. הקטע הבא בתור נבחר."""
+        segments = _segs([
+            ("דובר 1", "הקטע הארוך ביותר כאן אבל הוא שקט לגמרי באודיו עצמו"),
+            ("דובר 1", "קטע קצר יותר שכן נשמע"),
+        ])
+        silent_start = segments[0].start_seconds
+        monkeypatch.setattr(
+            speaker_embedding, "analyze_segment",
+            lambda audio_path, start, end: (VOICE_A, start == silent_start),
+        )
+
+        embedding, sample_segment = speaker_id.representative_embedding("audio.m4a", segments)
+
+        assert embedding is not None
+        assert sample_segment is segments[1]
 
 
 class TestIdentifySpeakers:
     def test_matched_speaker_is_renamed_everywhere_in_the_recording(self, store, monkeypatch):
-        speaker_id.enroll_known("u1", "דנה", VOICE_A, "rec0", 1, 0.0)
+        speaker_id.enroll_known("u1", "דנה", VOICE_A, _sample("rec0", 1, 0.0))
         segments = _segs([
             ("דובר 1", "שלום לכולם, בואו נתחיל את הישיבה של היום"),
             ("דובר 1", "יש לנו כמה נושאים על הפרק"),
         ])
-        monkeypatch.setattr(speaker_embedding, "extract_embedding", lambda *a: VOICE_A_AGAIN)
+        monkeypatch.setattr(
+            speaker_embedding, "analyze_segment", lambda *a: (VOICE_A_AGAIN, False)
+        )
 
-        result = speaker_id.identify_speakers(segments, "u1", "rec1", "audio.m4a")
+        speaker_id.identify_speakers(segments, "u1", "rec1", "audio.m4a")
 
-        assert [s.speaker_label for s in result] == ["דנה", "דנה"]
+        assert [s.speaker_label for s in segments] == ["דנה", "דנה"]
 
     def test_me_is_never_sent_through_voice_matching(self, store, monkeypatch):
         segments = _segs([("אני", "שלום, זו אני מדברת")])
         monkeypatch.setattr(
-            speaker_embedding, "extract_embedding",
+            speaker_embedding, "analyze_segment",
             lambda *a: pytest.fail("אסור לחשב embedding בשביל 'אני'"),
         )
-        result = speaker_id.identify_speakers(segments, "u1", "rec1", "audio.m4a")
-        assert result[0].speaker_label == "אני"
+        speaker_id.identify_speakers(segments, "u1", "rec1", "audio.m4a")
+        assert segments[0].speaker_label == "אני"
         assert store.list_speaker_profiles("u1") == []
 
     def test_unmatched_speaker_keeps_the_generic_label_but_opens_a_profile(self, store, monkeypatch):
         segments = _segs([("דובר 1", "שלום לכולם, בואו נתחיל את הישיבה של היום")])
-        monkeypatch.setattr(speaker_embedding, "extract_embedding", lambda *a: VOICE_A)
+        monkeypatch.setattr(speaker_embedding, "analyze_segment", lambda *a: (VOICE_A, False))
 
-        result = speaker_id.identify_speakers(segments, "u1", "rec1", "audio.m4a")
+        speaker_id.identify_speakers(segments, "u1", "rec1", "audio.m4a")
 
-        assert result[0].speaker_label == "דובר 1"
+        assert segments[0].speaker_label == "דובר 1"
         profiles = store.list_speaker_profiles("u1")
         assert len(profiles) == 1
         assert profiles[0]["name"] is None
+
+    def test_two_speakers_in_one_recording_never_share_a_profile(self, store, monkeypatch):
+        """ההפרדה בתוך ההקלטה כבר אומתה אקוסטית (ראה diarization.py), ולכן
+        שתי תוויות בה הן שני אנשים - גם כששניהם דומים לאותו פרופיל שמור.
+        בלי החסימה, פגישה עם שני קולות קרובים הייתה מציגה את אותו שם על
+        שני דוברים שונים."""
+        speaker_id.enroll_known("u1", "דנה", VOICE_A, _sample("rec0", 1, 0.0))
+        segments = _segs([
+            ("דובר 1", "הדוברת הראשונה מדברת כאן הרבה מאוד לאורך הפגישה"),
+            ("דובר 2", "והדוברת השנייה נשמעת דומה מאוד לראשונה"),
+        ])
+        voices = {
+            "דובר 1": LabelVoice(embedding=VOICE_A, sample=segments[0]),
+            "דובר 2": LabelVoice(embedding=VOICE_A_AGAIN, sample=segments[1]),
+        }
+
+        speaker_id.identify_speakers(
+            segments, "u1", "rec1", "audio.m4a", label_voices=voices
+        )
+
+        labels = [s.speaker_label for s in segments]
+        assert labels.count("דנה") == 1
+        assert labels[0] == "דנה"  # בעל הדיבור הרב יותר מקבל את הפרופיל
+        assert labels[1] == "דובר 2"
+
+    def test_the_label_to_profile_map_is_returned_for_later_correction(self, store, monkeypatch):
+        """המיפוי שחוזר הוא מה שהופך תיקון ידני של שם דובר ללמידה קבועה
+        (ראה pipeline/edit.py) - בלעדיו התיקון מת בהקלטה אחת."""
+        segments = _segs([("דובר 1", "שלום לכולם, בואו נתחיל את הישיבה של היום")])
+        monkeypatch.setattr(speaker_embedding, "analyze_segment", lambda *a: (VOICE_A, False))
+
+        profile_ids = speaker_id.identify_speakers(segments, "u1", "rec1", "audio.m4a")
+
+        assert list(profile_ids) == ["דובר 1"]
+        assert profile_ids["דובר 1"] in store.profiles
+
+
+class TestAmbiguousNamedMatch:
+    """אירוע 2026-08-17 בגלגולו השני: הסף המחמיר עוזר מול פרופיל **אחד**,
+    אבל כששני פרופילים מתויגים שניהם מעליו ובמרחק כמעט זהה, "הגבוה מנצח"
+    הוא הטלת מטבע בין שני שמות. ראה settings.speaker_match_margin."""
+
+    # שני פרופילים במרחק 20 מעלות זה מזה - שניהם "קרובים" לאותו קול חדש.
+    VOICE_DANA = [1.0, 0.0]
+    VOICE_MOM = [0.9396926207859084, 0.3420201433256687]  # 20°
+
+    def test_two_close_named_profiles_yield_no_name(self, store):
+        speaker_id.enroll_known("u1", "דנה", self.VOICE_DANA, _sample("rec0", 1, 0.0))
+        speaker_id.enroll_known("u1", "אמא", self.VOICE_MOM, _sample("rec0", 1, 0.0))
+        # בדיוק באמצע (10°): דמיון 0.985 לשניהם, מרווח אפס.
+        middle = [0.984807753012208, 0.17364817766693033]
+
+        name, _ = speaker_id.resolve_or_enroll("u1", middle, _sample("rec2", 0, 4.0))
+
+        assert name is None
+
+    def test_a_clear_winner_among_named_profiles_still_gets_the_name(self, store):
+        speaker_id.enroll_known("u1", "דנה", self.VOICE_DANA, _sample("rec0", 1, 0.0))
+        speaker_id.enroll_known("u1", "אמא", self.VOICE_MOM, _sample("rec0", 1, 0.0))
+        # זהה ל"דנה" (1.0) ומרוחק מ"אמא" (0.94) - מרווח 0.06, מעל הסף.
+        name, _ = speaker_id.resolve_or_enroll(
+            "u1", self.VOICE_DANA, _sample("rec2", 0, 4.0)
+        )
+
+        assert name == "דנה"
 
 
 class TestEmbeddingMath:
@@ -277,7 +367,7 @@ class TestCallRecordingSpeakerLocking:
         )
         enroll_calls = []
         monkeypatch.setattr(
-            pipeline.speaker_id, "enroll_known", lambda *a: enroll_calls.append(a)
+            pipeline.speaker_id, "enroll_known", lambda *a: enroll_calls.append(a) or "p1"
         )
 
         pipeline.process_call_recording(
@@ -294,7 +384,9 @@ class TestCallRecordingSpeakerLocking:
             pipeline.speaker_id, "representative_embedding",
             lambda audio_path, segments: (VOICE_A, segments[0]),
         )
-        monkeypatch.setattr(pipeline.speaker_id, "resolve_or_enroll", lambda *a: "דנה")
+        monkeypatch.setattr(
+            pipeline.speaker_id, "resolve_or_enroll", lambda *a: ("דנה", "p1")
+        )
 
         pipeline.process_call_recording(
             "rec1", "u1", "up.m4a", "down.m4a", "כותרת", contact_name="",
@@ -312,7 +404,9 @@ class TestCallRecordingSpeakerLocking:
             pipeline.speaker_id, "representative_embedding",
             lambda audio_path, segments: (VOICE_A, segments[0]),
         )
-        monkeypatch.setattr(pipeline.speaker_id, "resolve_or_enroll", lambda *a: None)
+        monkeypatch.setattr(
+            pipeline.speaker_id, "resolve_or_enroll", lambda *a: (None, "p1")
+        )
 
         pipeline.process_call_recording(
             "rec1", "u1", "up.m4a", "down.m4a", "כותרת", contact_name="",

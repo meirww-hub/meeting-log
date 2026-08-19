@@ -42,6 +42,15 @@ class CallImportWorker(appContext: Context, params: WorkerParameters) :
 
         private const val RETRY_BACKOFF_SECONDS = 20L
 
+        /**
+         * סטייה מותרת (שניות) בין זמן סיום השיחה ביומן השיחות (DATE+DURATION)
+         * לבין הזמן שבו cally סיימה לכתוב את הקובץ, כדי שעדיין ניחשב אותה
+         * שיחה. נדיב בכוונה (סיום כתיבת cally, הפרשי שעון בין stat ל-CallLog),
+         * אבל קטן בהרבה מהפער לשיחה הבאה שממש קרתה אחר כך - ראה
+         * mostRecentCallerName.
+         */
+        private const val CALL_LOG_MATCH_TOLERANCE_SECONDS = 90L
+
         /** קידומת למיפוי מזהה-הקלטה-בשרת -> מפתח השיחה אצל cally. */
         private const val KEY_RECORDING_PREFIX = "recording_"
 
@@ -138,7 +147,7 @@ class CallImportWorker(appContext: Context, params: WorkerParameters) :
         // דרך פשוטה לשייך איזו רשומת יומן שיחות שייכת לאיזה קובץ, ולכן
         // מוותרים על השם (נופל חזרה לתווית הגנרית "הצד השני" - לא רגרסיה,
         // זה בדיוק מה שהיה קורה עד היום).
-        val contactName = if (ready.size == 1) mostRecentCallerName() else null
+        val contactName = if (ready.size == 1) mostRecentCallerName(ready.single()) else null
 
         val destDir = File(applicationContext.getExternalFilesDir("callimport"), "")
         destDir.mkdirs()
@@ -264,24 +273,58 @@ class CallImportWorker(appContext: Context, params: WorkerParameters) :
      * שם - בלי לחתוך, בלי לנרמל וכולל שם משפחה.
      *
      * CACHED_NAME נשאר כגיבוי, למקרה שהרשאת אנשי הקשר לא ניתנה.
-     * מחזיר null אם אין רשומות או שהמספר לא שמור באנשי הקשר.
+     * מחזיר null אם אין רשומות תואמות או שהמספר לא שמור באנשי הקשר.
+     *
+     * **לא לוקחים סתם את הרשומה האחרונה ביומן** - זו הייתה התקלה: בין ניתוק
+     * השיחה לריצת הסריקה בפועל (ה-worker מתעכב 20 שניות ומעלה, ועם retry
+     * על Shizuku/רשת יכול להתעכב הרבה יותר; ו"נסה שוב מ-cally" מההיסטוריה
+     * מריץ את אותה סריקה על שיחה ישנה, מול יומן השיחות **של עכשיו**) יכולה
+     * להתקבל שיחה נוספת - גם החטאה קצרה - שהופכת לרשומה "הכי טרייה" ביומן,
+     * ונדבקת בטעות לשיחה שבאמת מיובאת (ראה תקלת שיוך שיחה לאיש קשר לא נכון,
+     * 2026-08-19). לכן מחפשים את רשומת היומן שזמן הסיום שלה (DATE+DURATION)
+     * קרוב בפועל לזמן שבו cally סיימה לכתוב את קובצי [group] - לא סתם את
+     * הראשונה במיון.
      */
-    private fun mostRecentCallerName(): String? {
+    private fun mostRecentCallerName(group: CallImportScan.CallGroup): String? {
         val hasCallLog = ContextCompat.checkSelfPermission(
             applicationContext, Manifest.permission.READ_CALL_LOG
         ) == PackageManager.PERMISSION_GRANTED
         if (!hasCallLog) return null
 
+        val callEndedAtSeconds = group.files.maxOf { it.modifiedEpochSeconds }
+
         val call = applicationContext.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
-            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME),
+            arrayOf(
+                CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME,
+                CallLog.Calls.DATE, CallLog.Calls.DURATION,
+            ),
             null, null,
             "${CallLog.Calls.DATE} DESC",
         )?.use { cursor ->
-            if (!cursor.moveToFirst()) return@use null
-            val number = cursor.getString(cursor.getColumnIndexOrThrow(CallLog.Calls.NUMBER))
-            val cached = cursor.getString(cursor.getColumnIndexOrThrow(CallLog.Calls.CACHED_NAME))
-            number.orEmpty() to cached?.trim()?.takeIf { it.isNotEmpty() }
+            var matched: Pair<String, String?>? = null
+            while (cursor.moveToNext()) {
+                val startMillis =
+                    cursor.getLong(cursor.getColumnIndexOrThrow(CallLog.Calls.DATE))
+                val durationSeconds =
+                    cursor.getLong(cursor.getColumnIndexOrThrow(CallLog.Calls.DURATION))
+                val endedAtSeconds = startMillis / 1000 + durationSeconds
+                if (Math.abs(endedAtSeconds - callEndedAtSeconds) <=
+                    CALL_LOG_MATCH_TOLERANCE_SECONDS
+                ) {
+                    val number =
+                        cursor.getString(cursor.getColumnIndexOrThrow(CallLog.Calls.NUMBER))
+                    val cached =
+                        cursor.getString(cursor.getColumnIndexOrThrow(CallLog.Calls.CACHED_NAME))
+                    matched = number.orEmpty() to cached?.trim()?.takeIf { it.isNotEmpty() }
+                    break
+                }
+                // יומן השיחות ממוין מהחדש לישן: ברגע שהגענו לרשומה שהסתיימה
+                // מוקדם משמעותית מהקובץ, כל מה שאחריה רק ישן יותר - אין טעם
+                // להמשיך לסרוק.
+                if (endedAtSeconds < callEndedAtSeconds - CALL_LOG_MATCH_TOLERANCE_SECONDS) break
+            }
+            matched
         } ?: return null
 
         val (number, cachedName) = call

@@ -5,6 +5,7 @@ __pycache__/
 backend/.env
 backend/service-account.json
 backend/oauth_client.json
+backend/verify_tmp
 
 # Android
 android/.gradle/

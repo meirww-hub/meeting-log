@@ -22,6 +22,23 @@ def speakers_in_order(labels: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(label for label in labels if label))
 
 
+# מה שמסמן בתמלול קטע שהאימות האקוסטי לא הצליח לשייך בוודאות (ראה
+# diarization.py). נספח לתווית בזמן **הצגה** בלבד ולא נכנס ל-speaker_label
+# עצמו: אחרת הוא היה נספר כדובר נוסף ב-speakers_in_order, מופיע כשורה
+# מיותרת במסך "עריכת דוברים", ומפספס את החלפת השם ב-replace_labels.
+UNCERTAIN_MARK = " (?)"
+
+
+def display_label(label: str, confident: bool) -> str:
+    """התווית כפי שהיא נכתבת בתמלול שהמשתמש קורא.
+
+    המשתמש ביקש במפורש שכשלא ברור מי דיבר - זה יישאר עמום ולא ינוחש. בסיכום
+    זה מנוסח כ"אחד הדוברים" (ראה summarize.UNKNOWN_SPEAKER); בתמלול, שבו
+    התווית עצמה היא המידע, הסימון נספח אליה.
+    """
+    return label if confident else f"{label}{UNCERTAIN_MARK}"
+
+
 def replace_labels(text: str, renames: dict[str, str]) -> str:
     """מחליף תוויות דוברים בתוך טקסט חופשי (סיכום, תיאור משימה), בסריקה אחת.
 

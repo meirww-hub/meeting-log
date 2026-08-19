@@ -48,6 +48,7 @@ from googleapiclient.http import MediaIoBaseUpload
 
 from app.config import settings
 from app.models import MeetingResult, TodoItem, TranscriptSegment
+from app.pipeline.speakers import display_label
 
 _SCOPES = ["https://www.googleapis.com/auth/drive"]
 _TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -214,6 +215,18 @@ def convert_to_pdf(content: bytes, filename: str, mime_type: str) -> bytes:
         return drive.files().export(fileId=temp_file["id"], mimeType="application/pdf").execute()
     finally:
         drive.files().update(fileId=temp_file["id"], body={"trashed": True}).execute()
+
+
+def _share_with_link(drive, file_id: str) -> None:
+    """פותח את הקובץ לצפייה לכל מי שיש לו את הקישור, בלי צורך באישור גישה.
+
+    בלי זה קובץ נשאר פרטי לחשבון ה-OAuth של Drive, וקישור שנשלח בוואטסאפ
+    היה מציג למקבל מסך "בקש גישה" שדורש אישור ידני מהמשתמש בכל פעם. ההרשאה
+    ניתנת רק לקובץ הבודד (לא לתיקיית הסוג שלו), כך שמי שמקבל קישור לסיכום
+    אחד לא יכול לגלוש דרכו לשאר הפגישות בארכיון."""
+    drive.permissions().create(
+        fileId=file_id, body={"type": "anyone", "role": "reader"}, fields="id"
+    ).execute()
 
 
 def _create_folder(drive, name: str, parent_id: str) -> str:
@@ -474,7 +487,14 @@ def _html_media(text: str, to_html=_text_to_rtl_html) -> MediaIoBaseUpload:
 
 
 def _transcript_to_text(segments: list[TranscriptSegment]) -> str:
-    return "\n\n".join(f"{s.speaker_label}:\n{s.text}" for s in segments)
+    """התמלול כטקסט, עם סימון "(?)" על קטע שהשיוך שלו לא ודאי - ראה
+    speakers.display_label ו-pipeline/diarization.py. אותה בנייה בדיוק קיימת
+    ב-pipeline/edit.py (עדכון המסמך אחרי שינוי שם דובר), ושתיהן חייבות
+    להישאר זהות - אחרת המסמך ב-Drive משנה צורה בכל עריכה."""
+    return "\n\n".join(
+        f"{display_label(s.speaker_label, s.speaker_confident)}:\n{s.text}"
+        for s in segments
+    )
 
 
 def _hex_to_rgb(hex_code: str) -> tuple[float, float, float]:
@@ -741,7 +761,7 @@ def _build_todo_spreadsheet(sheets, drive, name: str, todos: list[TodoItem], mee
         sheets.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
 
     file = drive.files().get(fileId=spreadsheet_id, fields="parents").execute()
-    return (
+    moved = (
         drive.files()
         .update(
             fileId=spreadsheet_id,
@@ -751,17 +771,21 @@ def _build_todo_spreadsheet(sheets, drive, name: str, todos: list[TodoItem], mee
         )
         .execute()
     )
+    _share_with_link(drive, moved["id"])
+    return moved
 
 
 def _upload_audio_file(drive, audio_path: str, folder_id: str, name: str) -> dict:
     with open(audio_path, "rb") as f:
         media = MediaIoBaseUpload(io.BytesIO(f.read()), mimetype="audio/mpeg", resumable=True)
     metadata = {"name": name, "parents": [folder_id]}
-    return (
+    file = (
         drive.files()
         .create(body=metadata, media_body=media, fields="id, webViewLink")
         .execute()
     )
+    _share_with_link(drive, file["id"])
+    return file
 
 
 def save_meeting_to_drive(
@@ -848,13 +872,15 @@ def _upload_text_as_doc_full(
     drive, name: str, text: str, folder_id: str, to_html=_text_to_rtl_html
 ) -> dict:
     metadata = {"name": name, "mimeType": _DOC_MIME, "parents": [folder_id]}
-    return (
+    file = (
         drive.files()
         .create(
             body=metadata, media_body=_html_media(text, to_html), fields="id, webViewLink"
         )
         .execute()
     )
+    _share_with_link(drive, file["id"])
+    return file
 
 
 def create_note_doc(title: str, text: str) -> dict:
@@ -930,6 +956,13 @@ def trash_folder(folder_id: str) -> None:
     drive.files().update(fileId=folder_id, body={"trashed": True}).execute()
 
 
+def share_existing_file(file_id: str) -> None:
+    """פותח קובץ קיים ב-Drive לצפייה לכל מי שיש לו את הקישור - ראה
+    _share_with_link. משמש רק ע"י scripts/share_existing_recordings.py,
+    לפתיחת הקלטות שנשמרו לפני שהשיתוף האוטומטי נוסף ליצירת קובץ."""
+    _share_with_link(_drive_client(), file_id)
+
+
 def upload_attachment(content: bytes, filename: str, mime_type: str, title: str) -> dict:
     """מעלה קובץ מצורף כמו שהוא (לא ממיר ל-Google Doc) לתיקיית "קבצים
     מצורפים", בשם "<כותרת הפגישה> - <שם הקובץ המקורי>": שם הקובץ המקורי
@@ -946,4 +979,5 @@ def upload_attachment(content: bytes, filename: str, mime_type: str, title: str)
         "parents": [_type_folder_id(drive, ATTACHMENTS_FOLDER)],
     }
     file = drive.files().create(body=metadata, media_body=media, fields="id, webViewLink").execute()
+    _share_with_link(drive, file["id"])
     return {"id": file["id"], "url": file["webViewLink"]}

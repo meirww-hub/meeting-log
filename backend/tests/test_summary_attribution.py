@@ -41,6 +41,7 @@ def _prompt() -> str:
         figure_count=156,
         min_topics=topics,
         min_words=words,
+        uncertainty_rule="",
     )
 
 

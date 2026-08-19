@@ -170,3 +170,111 @@ class TestNamesIdentifiedFromTheConversation:
     def test_label_absent_from_transcript_is_ignored(self):
         segments = _segs([("דובר 1", "שלום")])
         assert _resolve_speaker_names(segments, {"דובר 7": "רותי"}, set()) == {}
+
+
+class TestUncertainAttributionIsLeftVague:
+    """בקשה מפורשת של המשתמש: כשלא ברור מי אמר משהו - להשאיר עמום ולא
+    לנחש. האימות האקוסטי (pipeline/diarization.py) מסמן קטע כזה, וכאן
+    נבדק שהסימון באמת מגיע לשני המקומות שהמשתמש רואה: התמלול והסיכום."""
+
+    def test_transcript_marks_an_uncertain_segment(self):
+        from app.services.drive import _transcript_to_text
+
+        segments = _segs([("דובר 1", "שלום"), ("דובר 2", "היי")])
+        segments[1].speaker_confident = False
+
+        assert _transcript_to_text(segments) == "דובר 1:\nשלום\n\nדובר 2 (?):\nהיי"
+
+    def test_the_mark_is_not_part_of_the_label_itself(self):
+        """אחרת הוא היה נספר כדובר נוסף במסך "עריכת דוברים", והחלפת השם
+        בעריכה הייתה מפספסת אותו."""
+        segments = _segs([("דובר 1", "שלום"), ("דובר 1", "היי")])
+        segments[1].speaker_confident = False
+
+        assert speakers_in_order(s.speaker_label for s in segments) == ["דובר 1"]
+
+    def test_edit_and_drive_render_the_transcript_identically(self):
+        """שתי הגרסאות (מודל מול dict מ-Firestore) חייבות לייצר טקסט זהה,
+        אחרת המסמך ב-Drive משנה צורה בכל עריכת שם דובר."""
+        from app.pipeline.edit import _transcript_to_text as edit_render
+        from app.services.drive import _transcript_to_text as drive_render
+
+        segments = _segs([("דובר 1", "שלום"), ("דובר 2", "היי")])
+        segments[1].speaker_confident = False
+
+        assert edit_render([s.model_dump() for s in segments]) == drive_render(segments)
+
+    def test_legacy_segments_without_the_field_are_treated_as_certain(self):
+        """הקלטות שנשמרו לפני האימות האקוסטי - אין להן speaker_confident,
+        ואסור שיתחילו פתאום להיראות מסופקות."""
+        from app.pipeline.edit import _transcript_to_text as edit_render
+
+        assert edit_render([{"speaker_label": "דובר 1", "text": "שלום"}]) == "דובר 1:\nשלום"
+
+    def test_the_summary_prompt_sees_which_lines_are_uncertain(self):
+        from app.pipeline.summarize import UNCERTAIN_HINT, _format_transcript
+
+        segments = _segs([("דובר 1", "שלום"), ("דובר 2", "היי")])
+        segments[1].speaker_confident = False
+        lines = _format_transcript(segments).splitlines()
+
+        assert lines[0] == "דובר 1: שלום"
+        assert lines[1] == f"דובר 2{UNCERTAIN_HINT}: היי"
+
+
+class TestCorrectionTeachesTheVoiceProfile:
+    """תיקון ידני של שם דובר הוא העדות האמינה ביותר שיש על זהות הקול, והיא
+    נזרקה עד היום: ההקלטה התעדכנה, ופרופיל הקול נשאר בלי שם וחזר על אותה
+    טעות בהקלטה הבאה."""
+
+    def _recording(self):
+        return {
+            "transcript": [{"speaker_label": "דובר 2", "text": "היי"}],
+            "speaker_profile_ids": {"דובר 2": "profile7"},
+        }
+
+    def test_renaming_a_speaker_names_the_profile(self, monkeypatch):
+        import app.pipeline.edit as edit
+
+        taught: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            edit.speaker_id, "learn_name_from_correction",
+            lambda profile_id, name: taught.append((profile_id, name)),
+        )
+
+        updated = apply_update(
+            "rec1", self._recording(),
+            RecordingUpdateRequest(speaker_renames={"דובר 2": "רונית"}),
+        )
+
+        assert taught == [("profile7", "רונית")]
+        # המיפוי נשמר תחת התווית החדשה, כדי שגם תיקון נוסף אחריו יעבוד.
+        assert updated["speaker_profile_ids"] == {"רונית": "profile7"}
+
+    def test_a_label_without_a_profile_is_simply_skipped(self, monkeypatch):
+        import app.pipeline.edit as edit
+
+        monkeypatch.setattr(
+            edit.speaker_id, "learn_name_from_correction",
+            lambda *a: pytest.fail("אין פרופיל לתווית הזו - אין מה ללמד"),
+        )
+        recording = {
+            "transcript": [{"speaker_label": "דובר 9", "text": "היי"}],
+            "speaker_profile_ids": {"דובר 2": "profile7"},
+        }
+
+        apply_update(
+            "rec1", recording, RecordingUpdateRequest(speaker_renames={"דובר 9": "רונית"})
+        )
+
+    def test_old_recordings_without_the_map_still_rename_fine(self, monkeypatch):
+        """הקלטות שנשמרו לפני שהמיפוי היה קיים - העריכה עצמה חייבת לעבוד
+        כרגיל, פשוט בלי הלמידה."""
+        recording = {"transcript": [{"speaker_label": "דובר 1", "text": "שלום"}]}
+
+        updated = apply_update(
+            "rec1", recording, RecordingUpdateRequest(speaker_renames={"דובר 1": "מאיר"})
+        )
+
+        assert updated["speakers"] == ["מאיר"]
+        assert "speaker_profile_ids" not in updated

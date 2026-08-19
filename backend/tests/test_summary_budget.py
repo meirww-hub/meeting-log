@@ -100,6 +100,7 @@ class TestPromptRendering:
             figure_count=figure_count,
             min_topics=topics,
             min_words=words,
+            uncertainty_rule="",
         )
 
     def test_no_unfilled_placeholders(self):

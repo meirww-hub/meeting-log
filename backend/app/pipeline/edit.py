@@ -14,7 +14,8 @@ _recording_file_ids מרכז אותה. הקלטות ישנות, שעדיין י�
 import datetime
 
 from app.models import RecordingUpdateRequest
-from app.pipeline.speakers import replace_labels, speakers_in_order
+from app.pipeline import speaker_id
+from app.pipeline.speakers import display_label, replace_labels, speakers_in_order
 from app.services import drive, firestore_store
 
 # הקלטה קצרה מ-5 דקות שלא נערכה נמחקת אוטומטית 48 שעות אחרי יצירתה
@@ -49,7 +50,15 @@ _STALE_PROCESSING_THRESHOLD = datetime.timedelta(minutes=30)
 
 
 def _transcript_to_text(segments: list[dict]) -> str:
-    return "\n\n".join(f"{s['speaker_label']}:\n{s['text']}" for s in segments)
+    """כמו drive._transcript_to_text, אבל על הקטעים כפי שהם שמורים ב-Firestore
+    (dict ולא TranscriptSegment). שתי הגרסאות מוכרחות לייצר את אותו טקסט
+    בדיוק, אחרת מסמך התמלול ב-Drive משנה צורה בכל עריכת שם דובר.
+    speaker_confident חסר בהקלטות שנשמרו לפני האימות האקוסטי, ושם ברירת
+    המחדל היא "ודאי" - בדיוק כמו במודל."""
+    return "\n\n".join(
+        f"{display_label(s['speaker_label'], s.get('speaker_confident', True))}:\n{s['text']}"
+        for s in segments
+    )
 
 
 def _doc_id(recording: dict, id_field: str, url_field: str) -> str | None:
@@ -150,6 +159,20 @@ def apply_update(recording_id: str, recording: dict, payload: RecordingUpdateReq
         ) or speakers_in_order(
             renames.get(s, s) for s in (recording.get("speakers") or [])
         )
+
+        # תיקון ידני של שם דובר הוא העדות האמינה ביותר שיש על זהות הקול -
+        # והיא נזרקה עד היום: המשתמש תיקן "דובר 2" ל-"רונית", ההקלטה הזו
+        # התעדכנה, ופרופיל הקול נשאר בלי שם וחזר על אותה טעות בהקלטה הבאה.
+        # מכאן והלאה התיקון נשמר על הפרופיל עצמו, ולכן חל על כל הקלטה חדשה
+        # שבה אותו קול יישמע. ההקלטות שכבר נשמרו לא נסרקות (ראה speaker_id.py).
+        profile_ids = dict(recording.get("speaker_profile_ids") or {})
+        if profile_ids:
+            for old_label, new_label in renames.items():
+                profile_id = profile_ids.pop(old_label, None)
+                if profile_id:
+                    speaker_id.learn_name_from_correction(profile_id, new_label)
+                    profile_ids[new_label] = profile_id
+            updates["speaker_profile_ids"] = profile_ids
 
         transcript_doc_id = _doc_id(
             recording, "drive_transcript_doc_id", "drive_transcript_url"

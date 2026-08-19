@@ -11,9 +11,10 @@ from app.config import settings
 from app.models import ChatRequest, RecordingUpdateRequest, SpeakerProfileUpdateRequest
 from app.pipeline import edit as recording_edit
 from app.pipeline.attachments import mime_type_for, process_attachment, retry_attachment
+from app.pipeline import speaker_id
 from app.pipeline.chat import answer_question
 from app.pipeline.pipeline import process_call_recording, process_recording
-from app.services import drive, firestore_store, usage_tracker
+from app.services import compute_usage, drive, firestore_store, usage_tracker
 
 app = FastAPI(title="Meeting Log Backend")
 
@@ -75,6 +76,13 @@ def require_api_key(x_api_key: str = Header(default="")) -> None:
     ולא מכל האינטרנט, ע"י כותרת שיתופית פשוטה. /health פתוח ללא הגנה."""
     if not settings.backend_api_key or x_api_key != settings.backend_api_key:
         raise HTTPException(status_code=401, detail="invalid or missing API key")
+
+
+def require_scheduler_key(x_scheduler_key: str = Header(default="")) -> None:
+    """מפתח נפרד מ-require_api_key, ייעודי ל-Cloud Scheduler בלבד (ראה
+    compute_usage.py) - כדי לא לערבב את מפתח האפליקציה עם קריאות תזמון."""
+    if not settings.scheduler_api_key or x_scheduler_key != settings.scheduler_api_key:
+        raise HTTPException(status_code=401, detail="invalid or missing scheduler key")
 
 
 @app.get("/health")
@@ -208,13 +216,26 @@ def list_speaker_profiles(user_id: str) -> list[dict]:
     בלבד. name הוא null כל עוד לא תויג. recording_id/channel/start_seconds
     מצביעים על דגימת שמע להשמעה - אותו מסלול הזרמה כמו /recordings/{id}/audio."""
     profiles = firestore_store.list_speaker_profiles(user_id)
+    # ההקלטה שממנה נלקחה הדגימה יכולה להימחק אחרי שהפרופיל נשמר (מחיקה
+    # ידנית, או הניקוי האוטומטי של הקלטות קצרות אחרי 48 שעות) - ואז "נגן"
+    # פשוט לא משמיע כלום בלי שום הסבר. has_audio אומר לאפליקציה להציג את
+    # זה במקום להיכשל בשקט.
+    alive = firestore_store.existing_recording_ids(
+        {p["sample_recording_id"] for p in profiles if p.get("sample_recording_id")}
+    )
     return [
         {
             "profile_id": p["profile_id"],
             "name": p.get("name"),
+            "name_source": p.get("name_source"),
+            "sample_count": p.get("sample_count", 1),
             "recording_id": p["sample_recording_id"],
             "channel": p["sample_channel"],
             "start_seconds": p["sample_start_seconds"],
+            # חסר בפרופילים שנוצרו לפני שנשמר גם סוף הדגימה. 0 אומר
+            # לאפליקציה "נגן מכאן והלאה", כמו שהיה.
+            "end_seconds": p.get("sample_end_seconds") or 0.0,
+            "has_audio": p.get("sample_recording_id") in alive,
         }
         for p in profiles
     ]
@@ -229,8 +250,32 @@ def name_speaker_profile(profile_id: str, payload: SpeakerProfileUpdateRequest) 
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
-    firestore_store.update_speaker_profile(profile_id, name=name)
+    speaker_id.learn_name_from_correction(profile_id, name)
     return {"profile_id": profile_id, "name": name}
+
+
+@app.delete("/speaker-profiles/{profile_id}", dependencies=[Depends(require_api_key)])
+def delete_speaker_profile(profile_id: str) -> dict:
+    """מוחק פרופיל דובר.
+
+    פרופיל שגוי הוא לא רק שורה מיותרת במסך: כל עוד הוא קיים הוא מתחרה על
+    התאמות בכל הקלטה חדשה, ופרופיל שנבנה מרעש או משני קולות מעורבבים הוא
+    בדיוק מה שמייצר שיוך שגוי. שינוי שם לא פותר את זה - רק מחיקה מוציאה
+    אותו מהמשחק. ההקלטות שכבר נשמרו לא משתנות, כמו בכל תיוג (ראה
+    pipeline/speaker_id.py)."""
+    if firestore_store.get_speaker_profile(profile_id) is None:
+        raise HTTPException(status_code=404, detail="speaker profile not found")
+    firestore_store.delete_speaker_profile(profile_id)
+    return {"profile_id": profile_id, "status": "deleted"}
+
+
+@app.post("/admin/publish-usage-metric", dependencies=[Depends(require_scheduler_key)])
+def publish_usage_metric() -> dict:
+    """נקרא פעם ביום ע"י Cloud Scheduler. ראה compute_usage.py - שולף כמה
+    שניות Cloud Run נצרכו מתחילת החודש הקלנדרי, כותב את האחוז מהמכסה
+    החינמית כ-custom metric, ומדיניות התראה (מוגדרת ב-Cloud Monitoring,
+    לא בקוד) שולחת SMS כשהוא חוצה 50%."""
+    return compute_usage.publish_free_tier_usage_metric()
 
 
 @app.post("/recordings/cleanup", dependencies=[Depends(require_api_key)])

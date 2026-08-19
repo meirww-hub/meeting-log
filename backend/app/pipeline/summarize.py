@@ -142,6 +142,7 @@ owner יש סעיף ייעודי למטה.
 תמציאו שם שלא נאמר בשיחה. אם המשימה משותפת לכמה אנשים - כתבו את כולם
 מופרדים בפסיק.
 
+{uncertainty_rule}
 לגבי speaker_names: כללו דובר ברשימה רק אם שמו האמיתי הוזכר בבירור בתוך
 השיחה עצמה (הוא הציג את עצמו, או שדובר אחר פנה אליו בשמו באופן חד-משמעי) -
 אל תנחשו ואל תכלילו דובר שאתם לא בטוחים לגביו. לעולם אל תכלילו ברשימה דובר
@@ -149,8 +150,28 @@ owner יש סעיף ייעודי למטה.
 """
 
 
+# מה שנספח לשורת תמלול שהאימות האקוסטי לא הצליח לשייך בוודאות (ראה
+# pipeline/diarization.py). זו העדות היחידה שיש למודל המסכם על **איכות**
+# הייחוס: בלעדיה הוא רואה "דובר 2" זהה לחלוטין בין שורה שנמדדה בוודאות
+# לשורה שנפלה בדיוק בין שני קולות, ומייחס את שתיהן באותו ביטחון.
+UNCERTAIN_HINT = " [שיוך לא ודאי]"
+
+_UNCERTAINTY_RULE = """\
+
+שימו לב לסימון "{hint}" שמופיע בסוף תווית הדובר בחלק משורות התמלול. הוא
+אומר שבדיקה אקוסטית של ההקלטה **לא הצליחה לקבוע** מי הדובר באותה שורה -
+התווית שם היא ניחוש, לא עובדה. לכן:
+  • אמירה שמקורה בשורה מסומנת כזו לא תיוחס בשם לעולם. כתבו עליה "{unknown}".
+  • הסימון עצמו אינו חלק משם הדובר - לעולם אל תכתבו אותו בסיכום או במשימות.
+  • שורה בלי הסימון נמדדה ואומתה: שם הייחוס בשם נדרש כרגיל.
+"""
+
+
 def _format_transcript(segments: list[TranscriptSegment]) -> str:
-    return "\n".join(f"{s.speaker_label}: {s.text}" for s in segments)
+    return "\n".join(
+        f"{s.speaker_label}{'' if s.speaker_confident else UNCERTAIN_HINT}: {s.text}"
+        for s in segments
+    )
 
 
 _FIGURE_RE = re.compile(r"\d")
@@ -229,12 +250,21 @@ def summarize_and_extract_todos(
     figure_count = _figure_count(segments)
     min_topics, min_words = _summary_budget(word_count, figure_count)
 
+    # ההסבר על סימון אי-הוודאות נכנס רק כשיש בתמלול שורות מסומנות. פרומפט
+    # ארוך יותר עולה במחיר ובקשב, וכלל שאין לו אף מקרה בתמלול הוא רעש נטו.
+    uncertainty_rule = (
+        _UNCERTAINTY_RULE.format(hint=UNCERTAIN_HINT.strip(), unknown=UNKNOWN_SPEAKER)
+        if any(not s.speaker_confident for s in segments)
+        else ""
+    )
+
     task_hint = _TASK_SCHEMA_HINT.format(
         today=today_iso,
         word_count=word_count,
         figure_count=figure_count,
         min_topics=min_topics,
         min_words=min_words,
+        uncertainty_rule=uncertainty_rule,
     )
 
     response = call_with_retry(

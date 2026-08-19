@@ -122,6 +122,13 @@
     <string name="unidentified_speakers_load_error">שגיאה בטעינת הרשימה, נסו שוב</string>
     <string name="unidentified_speaker_name_hint">שם הדובר</string>
     <string name="unidentified_speaker_saved">השם נשמר</string>
+    <string name="speaker_profile_delete">מחק דובר</string>
+    <string name="speaker_profile_delete_confirm">למחוק את פרופיל הקול הזה? הוא לא ישמש יותר לזיהוי בהקלטות חדשות. הקלטות שכבר נשמרו לא ישתנו.</string>
+    <string name="speaker_profile_delete_unnamed">הדובר הלא מזוהה הזה</string>
+    <string name="speaker_profile_deleted">הפרופיל נמחק</string>
+    <string name="speaker_profile_delete_error">מחיקת הפרופיל נכשלה, נסו שוב</string>
+    <string name="speaker_profile_no_audio">הקטע לשמיעה כבר לא קיים - ההקלטה שממנה הוא נלקח נמחקה</string>
+    <string name="speaker_profile_samples">נשמע ב-%1$d הקלטות</string>
 
     <string name="share_receive_title">התקבלה הקלטת שיחה</string>
     <string name="share_receive_subtitle">שלחו אותה לעיבוד ב-Meeting Log כדי לקבל תמלול, סיכום ורשימת TO DO</string>

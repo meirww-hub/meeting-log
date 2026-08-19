@@ -7,6 +7,12 @@ class TranscriptSegment(BaseModel):
     text: str
     start_seconds: float
     end_seconds: float
+    # False כשהאימות האקוסטי לא הצליח לקבוע למי הקטע שייך (ראה
+    # pipeline/diarization.py). ברירת המחדל True כי כך זה בכל מסלול שבו
+    # הדובר ידוע בוודאות - שיחת טלפון דו-ערוצית, וגם הקלטות שנשמרו לפני
+    # שהשדה הזה היה קיים. ממנו נגזרים סימון "(?)" בתמלול ב-Drive וההוראה
+    # לסיכום לכתוב "אחד הדוברים" במקום שם מנוחש.
+    speaker_confident: bool = True
 
 
 class TodoItem(BaseModel):

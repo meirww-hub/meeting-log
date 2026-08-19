@@ -65,6 +65,9 @@ class FakeDrive:
     def files(self):
         return self
 
+    def permissions(self):
+        return _FakePermissions(self)
+
     def create(self, body, media_body=None, fields=None):
         file_id = self.add(body["name"], body.get("mimeType", ""), body.get("parents", []))
         return _Request(self.items[file_id])
@@ -96,6 +99,18 @@ class FakeDrive:
         ]
         matches.sort(key=lambda f: f["order"])
         return _Request({"files": matches})
+
+
+class _FakePermissions:
+    """drive.permissions() - רק רושם שהקובץ שותף, כדי שאפשר יהיה לבדוק את
+    זה בלי לפנות לרשת."""
+
+    def __init__(self, drive: "FakeDrive"):
+        self._drive = drive
+
+    def create(self, fileId, body=None, fields=None):
+        self._drive.items[fileId].setdefault("permissions", []).append(body)
+        return _Request({"id": "perm"})
 
 
 class FakeSheets:
@@ -158,6 +173,29 @@ def test_each_file_goes_to_its_type_folder_named_with_the_title(fake_drive, audi
     assert fake_drive.folder_of("תמלול - ישיבת צוות") == "תמלול"
     assert fake_drive.folder_of("TO DO - ישיבת צוות") == "TO DO"
     assert fake_drive.folder_of("הקלטה - ישיבת צוות.m4a") == "הקלטות"
+
+
+def test_every_file_is_opened_to_anyone_with_the_link(fake_drive, audio_file):
+    """קישור שנשלח בוואטסאפ צריך להיפתח ישירות, בלי שהמשתמש יאשר בקשת
+    גישה לכל נמען בנפרד - ראה _share_with_link."""
+    drive_service.save_meeting_to_drive(meeting("ישיבת צוות"), audio_file)
+    drive_service.create_note_doc("ישיבת צוות", "לא לשכוח")
+    drive_service.upload_attachment(b"pdf", "חשבונית.pdf", "application/pdf", "ישיבת צוות")
+
+    for name in (
+        "סיכום - ישיבת צוות",
+        "תמלול - ישיבת צוות",
+        "TO DO - ישיבת צוות",
+        "הקלטה - ישיבת צוות.m4a",
+        "הערות - ישיבת צוות",
+        "ישיבת צוות - חשבונית.pdf",
+    ):
+        [file] = fake_drive.by_name(name)
+        assert file.get("permissions") == [{"type": "anyone", "role": "reader"}], name
+
+    # תיקיית השורש, שמאגדת את כל הפגישות יחד, לא משותפת - אחרת קישור
+    # לפגישה אחת היה חושף את כל הארכיון.
+    assert "permissions" not in fake_drive.items["root"]
 
 
 def test_type_folders_sit_directly_under_the_library_root(fake_drive, audio_file):

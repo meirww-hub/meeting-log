@@ -12,6 +12,7 @@ class UnidentifiedSpeakersAdapter(
     private var items: List<SpeakerProfile> = emptyList(),
     private val onPlayClick: (SpeakerProfile) -> Unit,
     private val onSaveClick: (SpeakerProfile, String) -> Unit,
+    private val onDeleteClick: (SpeakerProfile) -> Unit,
 ) : RecyclerView.Adapter<UnidentifiedSpeakersAdapter.ViewHolder>() {
 
     private var playingProfileId: String? = null
@@ -31,6 +32,7 @@ class UnidentifiedSpeakersAdapter(
         val playButton: ImageView = view.findViewById(R.id.playButton)
         val nameInput: EditText = view.findViewById(R.id.nameInput)
         val saveButton: TextView = view.findViewById(R.id.saveButton)
+        val deleteButton: ImageView = view.findViewById(R.id.deleteButton)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -46,11 +48,16 @@ class UnidentifiedSpeakersAdapter(
         holder.playButton.setImageResource(
             if (playingProfileId == item.profileId) R.drawable.ic_pause else R.drawable.ic_play
         )
+        // דגימה שההקלטה שלה נמחקה לא תנגן לעולם. עמעום הכפתור אומר את זה
+        // מראש, במקום להשאיר את המשתמש לוחץ על כפתור שלא עושה כלום - בדיוק
+        // התלונה שממנה הגיע השדה הזה.
+        holder.playButton.alpha = if (item.hasAudio) 1f else 0.35f
         holder.playButton.setOnClickListener { onPlayClick(item) }
         holder.nameInput.setText(item.name.orEmpty())
         holder.saveButton.setOnClickListener {
             val name = holder.nameInput.text?.toString()?.trim().orEmpty()
             if (name.isNotEmpty() && name != item.name) onSaveClick(item, name)
         }
+        holder.deleteButton.setOnClickListener { onDeleteClick(item) }
     }
 }

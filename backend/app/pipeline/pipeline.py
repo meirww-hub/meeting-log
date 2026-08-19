@@ -6,7 +6,7 @@ from google import genai
 
 from app.config import settings
 from app.models import MeetingResult, TodoItem, TranscriptSegment
-from app.pipeline import speaker_id
+from app.pipeline import diarization, speaker_id
 from app.pipeline.speakers import replace_labels, speakers_in_order
 from app.pipeline.summarize import summarize_and_extract_todos
 from app.pipeline.transcription import (
@@ -28,7 +28,15 @@ def process_recording(
     segments = transcribe_with_diarization(audio_path)
 
     firestore_store.set_recording_status(recording_id, user_id, "identifying_speakers")
-    segments = speaker_id.identify_speakers(segments, user_id, recording_id, audio_path)
+    # שני שלבים שונים לגמרי, ובסדר הזה דווקא: קודם **כמה** אנשים מדברים כאן
+    # ומי אמר כל קטע (אימות אקוסטי מול האודיו, בתוך ההקלטה הזו - ראה
+    # diarization.py), ורק אחר כך **מי** הם (התאמה לפרופילים מהקלטות קודמות).
+    # הסדר ההפוך היה מנסה להצמיד שם לתווית שהיא בעצמה ערבוב של שני אנשים.
+    refined = diarization.refine_speaker_labels(segments, audio_path)
+    segments = refined.segments
+    profile_ids = speaker_id.identify_speakers(
+        segments, user_id, recording_id, audio_path, label_voices=refined.label_voices
+    )
 
     return _summarize_and_save(
         recording_id,
@@ -36,6 +44,7 @@ def process_recording(
         segments,
         title,
         audio_path,
+        speaker_profile_ids=profile_ids,
         measured_duration_seconds=measured_duration_seconds,
     )
 
@@ -83,24 +92,30 @@ def process_call_recording(
     # נעילת contact_name היא ללא תנאי (גם אם אין קטע ארוך מספיק לטביעת קול -
     # השם עדיין ודאי מאנשי הקשר). ההרשמה/ההתאמה לפי קול היא תוספת, לא תנאי.
     locked = bool(contact_name.strip())
+    profile_ids: dict[str, str] = {}
 
     embedding, sample_segment = speaker_id.representative_embedding(downlink_path, theirs)
     if embedding is not None:
+        sample = speaker_id.SpeakerSample(
+            recording_id=recording_id,
+            channel=other_channel,
+            start_seconds=sample_segment.start_seconds,
+            end_seconds=sample_segment.end_seconds,
+        )
         if contact_name.strip():
-            speaker_id.enroll_known(
-                user_id, other_label, embedding, recording_id, other_channel,
-                sample_segment.start_seconds,
+            profile_ids[other_label] = speaker_id.enroll_known(
+                user_id, other_label, embedding, sample
             )
         else:
-            matched_name = speaker_id.resolve_or_enroll(
-                user_id, embedding, recording_id, other_channel,
-                sample_segment.start_seconds,
+            matched_name, profile_id = speaker_id.resolve_or_enroll(
+                user_id, embedding, sample
             )
             if matched_name:
                 other_label = matched_name
                 for segment in theirs:
                     segment.speaker_label = matched_name
                 locked = True
+            profile_ids[other_label] = profile_id
 
     segments = sorted(mine + theirs, key=lambda s: s.start_seconds)
 
@@ -113,6 +128,7 @@ def process_call_recording(
         # תווית בלבד - שם הקובץ המלא נבנה ב-drive.py סביב כותרת הפגישה.
         extra_audio=[(downlink_path, "הצד השני")],
         locked_labels={other_label} if locked else set(),
+        speaker_profile_ids=profile_ids,
         measured_duration_seconds=measured_duration_seconds,
     )
 
@@ -186,6 +202,7 @@ def _summarize_and_save(
     audio_path: str,
     extra_audio: list[tuple[str, str]] | None = None,
     locked_labels: set[str] | None = None,
+    speaker_profile_ids: dict[str, str] | None = None,
     measured_duration_seconds: float = 0.0,
 ) -> MeetingResult:
     """השלבים המשותפים לכל סוגי ההקלטות, מרגע שיש תמלול מתויג דוברים."""
@@ -196,6 +213,13 @@ def _summarize_and_save(
     )
     renames = _resolve_speaker_names(segments, speaker_names, locked_labels or set())
     summary = _apply_speaker_names(segments, todos, summary, renames)
+    # התוויות זזו, ומיפוי הפרופילים חייב לזוז איתן - הוא נשמר לפי התווית
+    # שתופיע בפועל בהיסטוריה, כי משם מגיע תיקון ידני של שם דובר.
+    profile_ids = {
+        renames.get(label, label): profile_id
+        for label, profile_id in (speaker_profile_ids or {}).items()
+    }
+    speaker_id.learn_names_from_content(profile_ids, renames)
     final_title = title.strip() if title and title.strip() else suggested_title
     speakers = speakers_in_order(s.speaker_label for s in segments)
     duration_seconds = _duration_of(measured_duration_seconds, segments)
@@ -256,6 +280,10 @@ def _summarize_and_save(
         # ב-Drive - כדי שמסך הצ'אט יוכל לצטט דקה:שנייה מדויקת. ראה
         # pipeline/chat.py.
         transcript=[s.model_dump() for s in segments],
+        # תווית דובר -> פרופיל הקול שממנו היא נגזרה. בלי זה תיקון ידני של שם
+        # דובר במסך ההיסטוריה מתקן הקלטה אחת ונשכח: הפרופיל נשאר בלי שם (או
+        # עם השם השגוי) וחוזר על אותה טעות בהקלטה הבאה. ראה pipeline/edit.py.
+        speaker_profile_ids=profile_ids,
     )
 
     return result

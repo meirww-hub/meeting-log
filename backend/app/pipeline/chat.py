@@ -13,6 +13,7 @@ from google import genai
 from google.genai import types
 
 from app.config import settings
+from app.pipeline.speakers import display_label
 
 from app.pipeline._model import GEMINI_MAX_OUTPUT_TOKENS as _MAX_OUTPUT_TOKENS
 from app.pipeline._model import GEMINI_MODEL as _MODEL
@@ -36,6 +37,9 @@ _SCHEMA_HINT = """\
 
 כשאתה מזכיר זמן בתוך "answer", כתוב אותו תמיד בצורה דקה:שנייה (למשל 2:21),
 כדי שיהיה אפשר להקיש עליו ולהאזין לרגע עצמו.
+
+תווית דובר שמסתיימת ב-"(?)" פירושה שלא ידוע בוודאות מי הדובר באותה שורה.
+אל תייחס אמירה כזו לאדם בשם - כתוב "אחד הדוברים", ואל תעתיק את הסימון עצמו.
 
 המקורות (תמלול מתויג בזמן [דקה:שנייה]; קבצים מצורפים מתויגים בשמם):
 {transcripts}
@@ -116,7 +120,13 @@ def _format_recording(recording: dict) -> str:
     lines = [f"=== הקלטה: {title} ({date}) | מזהה: {recording_id} ==="]
     for seg in recording.get("transcript") or []:
         ts = _format_seconds(seg.get("start_seconds", 0))
-        lines.append(f"[{ts}] {seg.get('speaker_label', '')}: {seg.get('text', '')}")
+        # אותו סימון "(?)" שבתמלול עצמו: קטע שהאימות האקוסטי לא הצליח לשייך
+        # (ראה pipeline/diarization.py). בלעדיו הצ'אט עונה "דנה אמרה ש..."
+        # באותו ביטחון גם על שורה שהיא מלכתחילה ניחוש.
+        label = display_label(
+            seg.get("speaker_label", ""), seg.get("speaker_confident", True)
+        )
+        lines.append(f"[{ts}] {label}: {seg.get('text', '')}")
 
     for attachment in recording.get("attachments") or []:
         lines.append(f"--- קובץ מצורף: {attachment.get('filename', '')} ---")

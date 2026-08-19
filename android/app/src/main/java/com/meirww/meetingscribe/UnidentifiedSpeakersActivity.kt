@@ -3,12 +3,14 @@ package com.meirww.meetingscribe
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.meirww.meetingscribe.databinding.ActivityUnidentifiedSpeakersBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -27,10 +29,13 @@ import java.util.concurrent.TimeUnit
  *
  * תיוג/תיקון שם כאן חל רק קדימה: לא סורק ומתקן הקלטות שכבר נשמרו, רק
  * קובע את השם שינוצל בפעם הבאה שהקול הזה יזוהה (ראה PATCH /speaker-profiles).
+ * אותו דבר נכון למחיקה - היא מוציאה את הפרופיל מהתחרות על התאמות בהקלטות
+ * הבאות, ולא נוגעת במה שכבר נשמר.
  *
  * מנגן ערוץ אחד בלבד (לא כל הערוצים כמו RecordingPlayer ב-ChatActivity) -
  * בכוונה: קטע נקי של הדובר הזה בלבד, בלי דליפה מקולות אחרים באותה הקלטה,
- * הוא כל הנקודה כאן.
+ * הוא כל הנקודה כאן. ומאותה סיבה הניגון גם **נעצר** בסוף הקטע ולא ממשיך
+ * אל שאר ההקלטה.
  */
 class UnidentifiedSpeakersActivity : AppCompatActivity() {
 
@@ -50,6 +55,7 @@ class UnidentifiedSpeakersActivity : AppCompatActivity() {
     private val adapter = UnidentifiedSpeakersAdapter(
         onPlayClick = ::togglePlaybackOf,
         onSaveClick = ::saveName,
+        onDeleteClick = ::confirmDelete,
     )
 
     private val player by lazy { RecordingPlayer(this) }
@@ -107,12 +113,19 @@ class UnidentifiedSpeakersActivity : AppCompatActivity() {
     }
 
     private fun togglePlaybackOf(profile: SpeakerProfile) {
+        // ההקלטה שממנה נלקחה הדגימה נמחקה - אין מה לנגן, ואומרים את זה
+        // במקום להשמיע שקט.
+        if (!profile.hasAudio) {
+            Toast.makeText(this, R.string.speaker_profile_no_audio, Toast.LENGTH_LONG).show()
+            return
+        }
+
         if (loadedProfileId == profile.profileId && player.isLoaded) {
             if (player.isPlaying) {
-                player.pause()
-                adapter.setPlayingState(null)
+                stopPlayback()
             } else if (player.play()) {
                 adapter.setPlayingState(profile.profileId)
+                stopAtClipEnd(profile, ++playbackToken)
             }
             return
         }
@@ -144,10 +157,40 @@ class UnidentifiedSpeakersActivity : AppCompatActivity() {
             loadedProfileId = profile.profileId
             if (player.play()) {
                 adapter.setPlayingState(profile.profileId)
+                stopAtClipEnd(profile, token)
             } else {
                 Toast.makeText(this@UnidentifiedSpeakersActivity, R.string.player_no_focus, Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    /**
+     * עוצר בסוף הקטע של הדובר הזה.
+     *
+     * MediaPlayer לא יודע "נגן עד שנייה X", והקטע הוא חלק מקובץ ההקלטה
+     * המלא - אז בלי העצירה הזו לחיצה על "נגן" בפרופיל דובר ממשיכה אל שאר
+     * הפגישה, על כל שאר הדוברים שבה. זו לא בעיה אסתטית: כל הנקודה במסך
+     * הזה היא לשמוע **את הקול הזה** כדי לתת לו שם.
+     *
+     * פרופילים ישנים נשמרו בלי סוף הקטע (clipLengthMs == 0) - שם אין מה
+     * לעצור, וההתנהגות נשארת כפי שהייתה.
+     */
+    private fun stopAtClipEnd(profile: SpeakerProfile, token: Int) {
+        if (profile.clipLengthMs <= 0) return
+        // הזמן שנותר נמדד מהמיקום בפועל ולא מאורך הקטע, כדי שגם המשך אחרי
+        // השהיה באמצע ייעצר בסוף הקטע ולא כעבור אורך קטע שלם ממנו.
+        val remainingMs = (profile.endSeconds * 1000).toInt() - player.positionMs
+        if (remainingMs <= 0) return
+        lifecycleScope.launch {
+            delay(remainingMs.toLong())
+            if (token == playbackToken && player.isPlaying) stopPlayback()
+        }
+    }
+
+    private fun stopPlayback() {
+        playbackToken++
+        player.pause()
+        adapter.setPlayingState(null)
     }
 
     private fun saveName(profile: SpeakerProfile, name: String) {
@@ -158,11 +201,36 @@ class UnidentifiedSpeakersActivity : AppCompatActivity() {
                 return@launch
             }
             if (loadedProfileId == profile.profileId) {
-                player.pause()
-                adapter.setPlayingState(null)
+                stopPlayback()
                 loadedProfileId = null
             }
             Toast.makeText(this@UnidentifiedSpeakersActivity, R.string.unidentified_speaker_saved, Toast.LENGTH_SHORT).show()
+            loadProfiles()
+        }
+    }
+
+    private fun confirmDelete(profile: SpeakerProfile) {
+        AlertDialog.Builder(this)
+            .setTitle(profile.name ?: getString(R.string.speaker_profile_delete_unnamed))
+            .setMessage(R.string.speaker_profile_delete_confirm)
+            .setPositiveButton(R.string.attach_delete) { _, _ -> deleteProfile(profile) }
+            .setNegativeButton(R.string.share_cancel, null)
+            .show()
+    }
+
+    private fun deleteProfile(profile: SpeakerProfile) {
+        lifecycleScope.launch {
+            val success = withContext(Dispatchers.IO) { deleteProfileRequest(profile.profileId) }
+            if (!success) {
+                Toast.makeText(this@UnidentifiedSpeakersActivity, R.string.speaker_profile_delete_error, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (loadedProfileId == profile.profileId) {
+                stopPlayback()
+                player.release()
+                loadedProfileId = null
+            }
+            Toast.makeText(this@UnidentifiedSpeakersActivity, R.string.speaker_profile_deleted, Toast.LENGTH_SHORT).show()
             loadProfiles()
         }
     }
@@ -174,6 +242,19 @@ class UnidentifiedSpeakersActivity : AppCompatActivity() {
             .url("${BuildConfig.BACKEND_BASE_URL}/speaker-profiles/$profileId")
             .header("X-API-Key", BuildConfig.BACKEND_API_KEY)
             .patch(body)
+            .build()
+        return try {
+            client.newCall(request).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun deleteProfileRequest(profileId: String): Boolean {
+        val request = Request.Builder()
+            .url("${BuildConfig.BACKEND_BASE_URL}/speaker-profiles/$profileId")
+            .header("X-API-Key", BuildConfig.BACKEND_API_KEY)
+            .delete()
             .build()
         return try {
             client.newCall(request).execute().use { it.isSuccessful }
