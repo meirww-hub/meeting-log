@@ -34,19 +34,29 @@ object AudioSegmentMerger {
     private const val SEGMENT_GAP_US = 25_000L
 
     /**
-     * מחזיר true אם [output] נכתב בהצלחה. אם יש קטע קריא אחד בלבד הוא מועבר
-     * כמו שהוא (בלי remux מיותר).
+     * מאחד ומחזיר את אורך [output] בשניות, או null אם המיזוג נכשל.
+     *
+     * האורך נמדד כאן מחותמות הזמן של הפריימים שבאמת נכתבו - לא נקרא בדיעבד
+     * מה-metadata של הקובץ המאוחד. הסיבה: MediaMetadataRetriever לא תמיד
+     * מצליח לקרוא duration תקין מקובץ MP4 שעבר remux על ידי MediaMuxer (בניגוד
+     * לקובץ גולמי שיצא ישר מ-MediaRecorder) - וזו הייתה הסיבה שפגישה בת שעה
+     * הוצגה בהיסטוריה כ-5:46, אורך סוף הדיבור האחרון בתמלול, כי המדידה
+     * בטלפון נכשלה בשקט וחזרה 0 (ראה RecordingRecovery, AudioDuration).
+     *
+     * אם יש קטע קריא אחד בלבד הוא מועבר כמו שהוא (בלי remux מיותר), וכאן
+     * כן סביר להישען על metadata - זה קובץ MediaRecorder גולמי, לא מרוכז.
      */
-    fun merge(segments: List<File>, output: File): Boolean {
+    fun merge(segments: List<File>, output: File): Double? {
         val usable = segments.filter { it.exists() && it.length() > 0 }
         if (usable.isEmpty()) {
             Log.w(TAG, "merge: no usable segments")
-            return false
+            return null
         }
         if (usable.size == 1) {
             val single = usable.first()
-            if (single.renameTo(output)) return true
-            return runCatching { single.copyTo(output, overwrite = true) }.isSuccess
+            val moved = single.renameTo(output) ||
+                runCatching { single.copyTo(output, overwrite = true) }.isSuccess
+            return if (moved) AudioDuration.seconds(output) else null
         }
 
         var muxer: MediaMuxer? = null
@@ -119,11 +129,14 @@ object AudioSegmentMerger {
             }
         }
 
-        if (!wroteAnySample) {
+        if (!wroteAnySample || !output.exists() || output.length() == 0L) {
             output.delete()
             Log.e(TAG, "merge: every segment was unreadable")
-            return false
+            return null
         }
-        return output.exists() && output.length() > 0
+        // timeOffsetUs הוא lastPresentationTimeUs של הקטע האחרון שבאמת נכתב,
+        // בתוספת הרווח המלאכותי שנוסף *אחריו* לקראת קטע הבא - מפחיתים אותו
+        // כדי לקבל את חותמת הזמן האמיתית האחרונה שנכתבה.
+        return (timeOffsetUs - SEGMENT_GAP_US).coerceAtLeast(0L) / 1_000_000.0
     }
 }

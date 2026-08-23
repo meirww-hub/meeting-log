@@ -127,6 +127,10 @@ object RecordingRecovery {
 
         for (sessionDir in strandedSessions(context)) {
             var mergedFiles = mergedFilesIn(sessionDir)
+            // אורך שנמדד תוך כדי המיזוג הזה ממש (ראה AudioSegmentMerger.merge) -
+            // קיים רק לקבצים שאוחדו כרגע, ומדויק יותר מקריאת metadata אחרי
+            // מעשה על קובץ שעבר remux (ראה השימוש למטה).
+            val measuredDurations = mutableMapOf<String, Double>()
 
             if (mergedFiles.isEmpty()) {
                 val parts = sessionDir.listFiles()
@@ -151,8 +155,13 @@ object RecordingRecovery {
                     // שולחת לשרת כאילו הוא שלם.
                     val staging = File(sessionDir, "${target.name}.tmp")
                     staging.delete()
-                    if (AudioSegmentMerger.merge(batch, staging)) {
-                        if (!staging.renameTo(target)) staging.delete()
+                    val duration = AudioSegmentMerger.merge(batch, staging)
+                    if (duration != null) {
+                        if (staging.renameTo(target)) {
+                            measuredDurations[target.name] = duration
+                        } else {
+                            staging.delete()
+                        }
                     } else {
                         staging.delete()
                     }
@@ -204,9 +213,15 @@ object RecordingRecovery {
                                     "${sessionDir.name}/${audio.name}",
                                 // אורך החלק הזה, שהוא רשומה בפני עצמה בשרת.
                                 // בלעדיו האורך נגזר מסוף הדיבור האחרון - כלומר
-                                // פגישה שנגמרת בשתיקה נרשמת קצרה מכפי שהיא.
+                                // פגישה שנגמרת בשתיקה (או ששקטה בסופה בזמן
+                                // שההקלטה עצמה המשיכה) נרשמת קצרה מכפי שהיא.
+                                // עדיפות למדידה שנעשתה תוך כדי המיזוג עצמו על
+                                // פני קריאת metadata בדיעבד, שלא תמיד אמינה על
+                                // קובץ שעבר remux - ראה AudioSegmentMerger.
                                 UploadWorker.KEY_DURATION_SECONDS to
-                                    (AudioDuration.seconds(audio) ?: 0.0),
+                                    (measuredDurations[audio.name]
+                                        ?: AudioDuration.seconds(audio)
+                                        ?: 0.0),
                             )
                         )
                         .build(),
