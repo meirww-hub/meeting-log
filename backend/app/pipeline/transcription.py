@@ -7,6 +7,7 @@ speaker embeddings להתאמה מול פרופילים שמורים (ראו pip
 
 import json
 import mimetypes
+import subprocess
 
 from google import genai
 from google.genai import types
@@ -90,6 +91,11 @@ _MAX_CONTINUATIONS = 8
 # חפיפה מותרת בין סבב לסבב. המודל לא חוזר לשנייה מדויקת, ובלי הסובלנות הזו
 # משפט שנחתך בדיוק על הגבול היה נופל בין הכיסאות.
 _RESUME_TOLERANCE_SECONDS = 1.0
+
+# כמה מהסוף מותר להישאר לא מכוסה ועדיין להיחשב "הגענו לסוף ההקלטה". דיבור
+# אחרון שנחתך בדיוק על גבול השנייה, ושארית שקטה קצרה בסוף קובץ, לא אמורים
+# להצית עוד סבב המשך.
+_COVERAGE_TOLERANCE_SECONDS = 5.0
 
 _RESUME_RULE = """\
 
@@ -175,6 +181,32 @@ def _hit_output_ceiling(response) -> bool:
     return "MAX_TOKENS" in str(getattr(candidates[0], "finish_reason", ""))
 
 
+def _probe_duration_seconds(audio_path: str) -> float | None:
+    """אורך קובץ האודיו בפועל (ffprobe), או None אם אי אפשר לקרוא אותו.
+
+    זו הביקורת שהייתה חסרה: המודל יכול לסיים ולהחזיר finish_reason=STOP
+    (כלומר "לא נקטע" מבחינת _hit_output_ceiling) אחרי שכיסה רק חלק מהאודיו -
+    הוא פשוט מפסיק "להקשיב" בלי סימן חיצוני לכך. נמצא בפועל ב-2026-08-23:
+    פגישה של כשעה רצופה, בלי שתיקות, נשמרה כ"done" עם תמלול שמסתיים אחרי
+    כ-5.5 דקות - כי דבר לא בדק שהתמלול בכלל הגיע לסוף ההקלטה. ראה השימוש
+    ב-_transcribe_in_full: כיסוי חלקי מוביל לעוד סבב המשך, בדיוק כמו קטיעה
+    אמיתית, במקום להתקבל כהצלחה.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                audio_path,
+            ],
+            capture_output=True, check=True, text=True,
+        )
+        return float(result.stdout.strip())
+    except (subprocess.CalledProcessError, ValueError, OSError):
+        return None
+
+
 def _decode_items(text: str) -> tuple[list[dict], bool]:
     """מפרק את תשובת המודל למערך פריטים, ומחזיר גם אם היא הגיעה קטועה.
 
@@ -248,6 +280,18 @@ def _transcribe_in_full(
         config=types.UploadFileConfig(mime_type=_mime_type_for(audio_path)),
     )
 
+    # אורך האמת של הקובץ, לבדיקה שהתמלול הגיע עד לשם ולא רק "לא נקטע"
+    # מבחינת תקציב הפלט - ראה _probe_duration_seconds ו-_reached_the_end.
+    # None כשאי אפשר לקרוא אותו (למשל בבדיקות עם קובץ פיקטיבי) - אז אין
+    # ברירה אלא לסמוך על finish_reason כמו קודם.
+    total_duration_seconds = _probe_duration_seconds(audio_path)
+
+    def _reached_the_end(covered: float) -> bool:
+        return (
+            total_duration_seconds is None
+            or covered >= total_duration_seconds - _COVERAGE_TOLERANCE_SECONDS
+        )
+
     collected: list[dict] = []
     covered_seconds = 0.0
     complete = False
@@ -292,11 +336,18 @@ def _transcribe_in_full(
             # שבידינו - או שהוא נתקע ומחזיר את אותו זנב, ואז אין טעם בעוד סבב.
             restart_coverage = max((_segment_end(i) for i in items), default=0.0)
             if restart_coverage <= covered_seconds:
+                # שום דבר חדש, גם לא ניסיון מחדש עם יותר כיסוי. אם הסבב הזה
+                # עצמו לא נקטע - המודל נשאל מפורשות "יש עוד?" וענה בבירור
+                # שלא - זו תשובה אמינה, גם אם עדיין יש פער מול אורך הקובץ
+                # (למשל שארית שקטה שהמשתמש שכח לעצור). קטיעה חוזרת (MAX_TOKENS)
+                # היא הסימן שהמודל תקוע ולא באמת בדק - שם אסור לבטוח בשתיקה.
+                if not truncated:
+                    complete = True
                 break
             collected = list(items)
             covered_seconds = restart_coverage
 
-        if not truncated:
+        if not truncated and _reached_the_end(covered_seconds):
             complete = True
             break
 
