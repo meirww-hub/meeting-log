@@ -101,7 +101,7 @@ def fake_gemini(monkeypatch):
     monkeypatch.setattr(transcription.genai, "Client", _FakeClient)
     # הבדיקות כאן על היגיון הקטיעה/ההמשך בלבד - לא על בדיקת השקט (ראה
     # test_transcription_silence.py), ואין להן קובץ אודיו אמיתי ל-ffmpeg.
-    monkeypatch.setattr(transcription.speaker_embedding, "segment_is_silent", lambda *a: False)
+    monkeypatch.setattr(transcription, "segment_is_silent", lambda *a: False)
     return type("Fake", (), {"calls": calls, "responses": responses})()
 
 
@@ -118,7 +118,7 @@ def test_truncated_transcription_continues_from_where_it_stopped(fake_gemini, tm
         _FakeResponse(_segments_json(_items(5, start=4)), finish_reason="STOP")
     )
 
-    segments = transcription.transcribe_single_channel(str(audio), "אני", 1)
+    segments = transcription.transcribe_single_channel(str(audio))
 
     assert len(fake_gemini.calls) == 2, "התמלול הקטוע היה צריך בקשת המשך"
     # הבקשה השנייה אומרת למודל מהיכן להמשיך.
@@ -142,7 +142,7 @@ def test_continuation_drops_segments_already_transcribed(fake_gemini, tmp_path):
         _FakeResponse(_segments_json(_items(4, start=3)), finish_reason="STOP")
     )
 
-    segments = transcription.transcribe_single_channel(str(audio), "אני", 1)
+    segments = transcription.transcribe_single_channel(str(audio))
 
     texts = [s.text for s in segments]
     assert texts == sorted(set(texts), key=texts.index), "יש כפילויות בתמלול"
@@ -162,7 +162,7 @@ def test_stuck_model_fails_loudly_instead_of_returning_half(fake_gemini, tmp_pat
         )
 
     with pytest.raises(transcription.IncompleteTranscriptError):
-        transcription.transcribe_single_channel(str(audio), "אני", 1)
+        transcription.transcribe_single_channel(str(audio))
 
     assert len(fake_gemini.calls) == 2, "סבב שלא הוסיף כלום היה צריך לעצור"
 
@@ -181,7 +181,7 @@ def test_exhausting_all_continuations_fails_loudly(fake_gemini, tmp_path):
         )
 
     with pytest.raises(transcription.IncompleteTranscriptError):
-        transcription.transcribe_single_channel(str(audio), "אני", 1)
+        transcription.transcribe_single_channel(str(audio))
 
     assert len(fake_gemini.calls) == transcription._MAX_CONTINUATIONS
 
@@ -203,7 +203,7 @@ def test_model_restarting_from_zero_supersedes_the_partial_attempt(
     # ניסיון שלם מחדש מההתחלה, ארוך יותר ממה שכבר בידינו.
     fake_gemini.responses.append(_FakeResponse(_segments_json(_items(9))))
 
-    segments = transcription.transcribe_single_channel(str(audio), "אני", 1)
+    segments = transcription.transcribe_single_channel(str(audio))
 
     texts = [s.text for s in segments]
     assert texts == [f"משפט מספר {i}" for i in range(9)], "הניסיון השלם לא אומץ"
@@ -215,31 +215,31 @@ def test_every_request_sends_an_explicit_output_ceiling(fake_gemini, tmp_path):
     audio.write_bytes(b"audio")
     fake_gemini.responses.append(_FakeResponse(_segments_json(_items(2))))
 
-    transcription.transcribe_single_channel(str(audio), "אני", 1)
+    transcription.transcribe_single_channel(str(audio))
 
     config = fake_gemini.calls[0]["config"]
     assert config.max_output_tokens == transcription._MAX_OUTPUT_TOKENS
 
 
-def test_diarized_continuation_carries_speaker_numbering(fake_gemini, tmp_path):
-    """בהמשך של פגישה, המודל חייב לדעת איזה מספר שייך למי."""
+def test_meeting_continuation_still_reports_resume_point(fake_gemini, tmp_path):
+    """בהמשך של פגישה, בקשת ההמשך אומרת למודל מהיכן להתחיל."""
     audio = tmp_path / "meeting.m4a"
     audio.write_bytes(b"audio")
 
     first = [
-        {"speaker_tag": 1, "text": "שלום", "start_seconds": 0.0, "end_seconds": 5.0},
-        {"speaker_tag": 2, "text": "מה נשמע", "start_seconds": 5.0, "end_seconds": 9.0},
+        {"text": "שלום", "start_seconds": 0.0, "end_seconds": 5.0},
+        {"text": "מה נשמע", "start_seconds": 5.0, "end_seconds": 9.0},
     ]
     second = [
-        {"speaker_tag": 2, "text": "בסדר גמור", "start_seconds": 10.0, "end_seconds": 14.0}
+        {"text": "בסדר גמור", "start_seconds": 10.0, "end_seconds": 14.0}
     ]
     fake_gemini.responses.append(
         _FakeResponse(_segments_json(first)[:-3], finish_reason="MAX_TOKENS")
     )
     fake_gemini.responses.append(_FakeResponse(_segments_json(second)))
 
-    segments = transcription.transcribe_with_diarization(str(audio))
+    segments = transcription.transcribe_meeting(str(audio))
 
     resume_prompt = fake_gemini.calls[1]["contents"][1]
-    assert "שלום" in resume_prompt, "הזנב שתומלל לא נשלח כהקשר"
-    assert [s.speaker_label for s in segments][-1] == "דובר 2"
+    assert "5" in resume_prompt, "נקודת ההמשך לא נשלחה"
+    assert [s.text for s in segments][-1] == "בסדר גמור"

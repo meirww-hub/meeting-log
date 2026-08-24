@@ -48,7 +48,6 @@ from googleapiclient.http import MediaIoBaseUpload
 
 from app.config import settings
 from app.models import MeetingResult, TodoItem, TranscriptSegment
-from app.pipeline.speakers import display_label
 
 _SCOPES = ["https://www.googleapis.com/auth/drive"]
 _TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -487,14 +486,9 @@ def _html_media(text: str, to_html=_text_to_rtl_html) -> MediaIoBaseUpload:
 
 
 def _transcript_to_text(segments: list[TranscriptSegment]) -> str:
-    """התמלול כטקסט, עם סימון "(?)" על קטע שהשיוך שלו לא ודאי - ראה
-    speakers.display_label ו-pipeline/diarization.py. אותה בנייה בדיוק קיימת
-    ב-pipeline/edit.py (עדכון המסמך אחרי שינוי שם דובר), ושתיהן חייבות
-    להישאר זהות - אחרת המסמך ב-Drive משנה צורה בכל עריכה."""
-    return "\n\n".join(
-        f"{display_label(s.speaker_label, s.speaker_confident)}:\n{s.text}"
-        for s in segments
-    )
+    """התמלול כטקסט, קטע אחר קטע. אותה בנייה בדיוק קיימת ב-pipeline/edit.py,
+    ושתיהן חייבות להישאר זהות - אחרת המסמך ב-Drive משנה צורה בכל עריכה."""
+    return "\n\n".join(s.text for s in segments)
 
 
 def _hex_to_rgb(hex_code: str) -> tuple[float, float, float]:

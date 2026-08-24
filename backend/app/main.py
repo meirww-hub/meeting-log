@@ -8,10 +8,9 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.responses import Response, StreamingResponse
 
 from app.config import settings
-from app.models import ChatRequest, RecordingUpdateRequest, SpeakerProfileUpdateRequest
+from app.models import ChatRequest, RecordingUpdateRequest
 from app.pipeline import edit as recording_edit
 from app.pipeline.attachments import mime_type_for, process_attachment, retry_attachment
-from app.pipeline import speaker_id
 from app.pipeline.chat import answer_question
 from app.pipeline.pipeline import process_call_recording, process_recording
 from app.services import compute_usage, drive, firestore_store, usage_tracker
@@ -29,7 +28,7 @@ _PIPELINE_RETRY_DELAY_SECONDS = 20
 # השלבים שאחרי כישלון בהם מותר להתחיל מחדש מאפס. משלב הכתיבה ל-Drive
 # ואילך כבר נוצרו תיקייה ומסמכים, וריצה שנייה הייתה מייצרת עותק שני שלהם.
 _RESUMABLE_STATUSES = frozenset(
-    {"queued", "transcribing", "identifying_speakers", "summarizing"}
+    {"queued", "transcribing", "summarizing"}
 )
 
 
@@ -103,7 +102,6 @@ async def upload_recording(
     file_downlink: UploadFile | None = File(None),
     title: str = Form(""),
     user_id: str = Form(...),
-    contact_name: str = Form(""),
     client_upload_id: str = Form(""),
     duration_seconds: float = Form(0.0),
 ) -> dict:
@@ -111,10 +109,7 @@ async def upload_recording(
 
     שיחת טלפון שנקלטה אוטומטית מ-cally מגיעה כשני ערוצים מבודדים: `file`
     הוא הצד שלי (uplink) ו-`file_downlink` הצד השני. במקרה כזה מתבצע תמלול
-    נפרד לכל ערוץ, כך שזיהוי הדוברים ודאי. הקלטה רגילה (מיקרופון/שיתוף)
-    מגיעה עם `file` בלבד ועוברת diarization כרגיל. contact_name (רלוונטי רק
-    לשיחות טלפון) הוא שם איש הקשר שהאפליקציה שלפה מהיסטוריית השיחות של
-    הטלפון, לתיוג ודאי של הצד השני (ראה CallImportWorker.kt).
+    נפרד לכל ערוץ. הקלטה רגילה (מיקרופון/שיתוף) מגיעה עם `file` בלבד.
 
     client_upload_id הוא מזהה יציב של מקור ההקלטה (מפתח השיחה אצל cally, או
     תיקיית ה-session ושם הקובץ בהקלטת פגישה). העלאה שנייה של אותו מקור מזוהה
@@ -164,7 +159,6 @@ async def upload_recording(
             str(audio_path),
             str(downlink_path),
             title,
-            contact_name,
             duration_seconds,
         )
     else:
@@ -192,81 +186,19 @@ def get_recording_status(recording_id: str) -> dict:
 @app.get("/recordings", dependencies=[Depends(require_api_key)])
 def list_recordings(user_id: str) -> list[dict]:
     """כל ההקלטות שהושלמו, לצורך מסך ההיסטוריה באפליקציה. הסינון
-    (כותרת/תאריך/דובר) מתבצע בצד האפליקציה על הרשימה המלאה - נפח הנתונים
+    (כותרת/תאריך) מתבצע בצד האפליקציה על הרשימה המלאה - נפח הנתונים
     האישי קטן מכדי שיהיה צורך בסינון בצד השרת."""
     return firestore_store.list_recordings(user_id)
 
 
 @app.patch("/recordings/{recording_id}", dependencies=[Depends(require_api_key)])
 def update_recording(recording_id: str, payload: RecordingUpdateRequest) -> dict:
-    """עריכת כותרת/דוברים/הערה מהאפליקציה. כל שדה בגוף הבקשה שנשלח (לא None)
-    מתעדכן גם ב-Firestore וגם ב-Drive (שם התיקייה/קובץ התמלול/קובץ הערות)."""
+    """עריכת כותרת/הערה מהאפליקציה. כל שדה בגוף הבקשה שנשלח (לא None)
+    מתעדכן גם ב-Firestore וגם ב-Drive (שם התיקייה/קובץ הערות)."""
     recording = firestore_store.get_recording(recording_id)
     if recording is None:
         raise HTTPException(status_code=404, detail="recording not found")
     return recording_edit.apply_update(recording_id, recording, payload)
-
-
-@app.get("/speaker-profiles", dependencies=[Depends(require_api_key)])
-def list_speaker_profiles(user_id: str) -> list[dict]:
-    """כל פרופילי הדוברים שזוהו לפי טביעת קול - מתויגים ולא-מתויגים כאחד -
-    למסך פרופילי הדוברים באפליקציה, גם לתיוג ראשוני וגם לתיקון שם קיים.
-    כל פרופיל הוא קול אחד שנצבר על פני הקלטות (ראה pipeline/speaker_id.py),
-    לא שורה לכל הקלטה - אותו דובר שחוזר בכמה הקלטות מופיע כאן פעם אחת
-    בלבד. name הוא null כל עוד לא תויג. recording_id/channel/start_seconds
-    מצביעים על דגימת שמע להשמעה - אותו מסלול הזרמה כמו /recordings/{id}/audio."""
-    profiles = firestore_store.list_speaker_profiles(user_id)
-    # ההקלטה שממנה נלקחה הדגימה יכולה להימחק אחרי שהפרופיל נשמר (מחיקה
-    # ידנית, או הניקוי האוטומטי של הקלטות קצרות אחרי 48 שעות) - ואז "נגן"
-    # פשוט לא משמיע כלום בלי שום הסבר. has_audio אומר לאפליקציה להציג את
-    # זה במקום להיכשל בשקט.
-    alive = firestore_store.existing_recording_ids(
-        {p["sample_recording_id"] for p in profiles if p.get("sample_recording_id")}
-    )
-    return [
-        {
-            "profile_id": p["profile_id"],
-            "name": p.get("name"),
-            "name_source": p.get("name_source"),
-            "sample_count": p.get("sample_count", 1),
-            "recording_id": p["sample_recording_id"],
-            "channel": p["sample_channel"],
-            "start_seconds": p["sample_start_seconds"],
-            # חסר בפרופילים שנוצרו לפני שנשמר גם סוף הדגימה. 0 אומר
-            # לאפליקציה "נגן מכאן והלאה", כמו שהיה.
-            "end_seconds": p.get("sample_end_seconds") or 0.0,
-            "has_audio": p.get("sample_recording_id") in alive,
-        }
-        for p in profiles
-    ]
-
-
-@app.patch("/speaker-profiles/{profile_id}", dependencies=[Depends(require_api_key)])
-def name_speaker_profile(profile_id: str, payload: SpeakerProfileUpdateRequest) -> dict:
-    """מתייג פרופיל דובר בשם, או מתקן שם שכבר קיים לו. חל רק מהיום והלאה -
-    הקלטות שכבר נשמרו לא נסרקות ולא מתעדכנות (הוחלט במפורש; ראה speaker_id.py)."""
-    if firestore_store.get_speaker_profile(profile_id) is None:
-        raise HTTPException(status_code=404, detail="speaker profile not found")
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="name is required")
-    speaker_id.learn_name_from_correction(profile_id, name)
-    return {"profile_id": profile_id, "name": name}
-
-
-@app.delete("/speaker-profiles/{profile_id}", dependencies=[Depends(require_api_key)])
-def delete_speaker_profile(profile_id: str) -> dict:
-    """מוחק פרופיל דובר.
-
-    פרופיל שגוי הוא לא רק שורה מיותרת במסך: כל עוד הוא קיים הוא מתחרה על
-    התאמות בכל הקלטה חדשה, ופרופיל שנבנה מרעש או משני קולות מעורבבים הוא
-    בדיוק מה שמייצר שיוך שגוי. שינוי שם לא פותר את זה - רק מחיקה מוציאה
-    אותו מהמשחק. ההקלטות שכבר נשמרו לא משתנות, כמו בכל תיוג (ראה
-    pipeline/speaker_id.py)."""
-    if firestore_store.get_speaker_profile(profile_id) is None:
-        raise HTTPException(status_code=404, detail="speaker profile not found")
-    firestore_store.delete_speaker_profile(profile_id)
-    return {"profile_id": profile_id, "status": "deleted"}
 
 
 @app.post("/admin/publish-usage-metric", dependencies=[Depends(require_scheduler_key)])

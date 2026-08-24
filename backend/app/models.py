@@ -2,17 +2,9 @@ from pydantic import BaseModel
 
 
 class TranscriptSegment(BaseModel):
-    speaker_label: str  # "דובר 1" בשלב 1, שם אמיתי משלב 2 ואילך
-    speaker_tag: int  # התג הגולמי שהחזיר מנוע התמלול
     text: str
     start_seconds: float
     end_seconds: float
-    # False כשהאימות האקוסטי לא הצליח לקבוע למי הקטע שייך (ראה
-    # pipeline/diarization.py). ברירת המחדל True כי כך זה בכל מסלול שבו
-    # הדובר ידוע בוודאות - שיחת טלפון דו-ערוצית, וגם הקלטות שנשמרו לפני
-    # שהשדה הזה היה קיים. ממנו נגזרים סימון "(?)" בתמלול ב-Drive וההוראה
-    # לסיכום לכתוב "אחד הדוברים" במקום שם מנוחש.
-    speaker_confident: bool = True
 
 
 class TodoItem(BaseModel):
@@ -27,7 +19,6 @@ class MeetingResult(BaseModel):
     transcript: list[TranscriptSegment]
     summary: str
     todos: list[TodoItem]
-    speakers: list[str] = []
     duration_seconds: float = 0.0
     # drive_folder_id קיים רק בהקלטות מלפני המעבר לתיקיות לפי סוג, שלהן
     # עדיין יש תיקייה משלהן ב-Drive. drive_folder_url מצביע היום על ספריית
@@ -70,14 +61,4 @@ class RecordingUpdateRequest(BaseModel):
     """גוף בקשת PATCH /recordings/{id} - כל שדה אופציונלי, רק מה שנשלח מתעדכן."""
 
     title: str | None = None
-    # מיפוי תווית ישנה -> חדשה, למשל {"דובר 1": "דני"}. רק תוויות שמופיעות
-    # במפתחות המילון משתנות, שאר הדוברים נשארים כפי שהיו.
-    speaker_renames: dict[str, str] | None = None
     note: str | None = None
-
-
-class SpeakerProfileUpdateRequest(BaseModel):
-    """גוף בקשת PATCH /speaker-profiles/{id} - תיוג פרופיל דובר לא-מזוהה
-    בשם, ממסך "דוברים לא מזוהים" באפליקציה (ראה pipeline/speaker_id.py)."""
-
-    name: str

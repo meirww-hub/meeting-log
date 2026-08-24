@@ -96,7 +96,6 @@ class RecordingPickerSheet(
             .filter { item ->
                 val matchesQuery = query.isBlank() ||
                     item.title.contains(query, ignoreCase = true) ||
-                    item.speakers.any { it.contains(query, ignoreCase = true) } ||
                     item.note?.contains(query, ignoreCase = true) == true ||
                     item.date.contains(query) ||
                     item.date.toDisplayDate().contains(query)

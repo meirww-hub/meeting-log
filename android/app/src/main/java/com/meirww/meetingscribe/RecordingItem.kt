@@ -35,7 +35,6 @@ data class RecordingItem(
     val recordingId: String,
     val title: String,
     val date: String,
-    val speakers: List<String>,
     val durationSeconds: Double,
     val folderUrl: String?,
     val transcriptUrl: String?,
@@ -62,10 +61,6 @@ data class RecordingItem(
 ) {
     companion object {
         fun fromJson(obj: JSONObject): RecordingItem {
-            val speakers = mutableListOf<String>()
-            obj.optJSONArray("speakers")?.let { arr ->
-                for (i in 0 until arr.length()) speakers.add(arr.getString(i))
-            }
             val attachments = mutableListOf<Attachment>()
             obj.optJSONArray("attachments")?.let { arr ->
                 for (i in 0 until arr.length()) attachments.add(Attachment.fromJson(arr.getJSONObject(i)))
@@ -85,7 +80,6 @@ data class RecordingItem(
                 date = obj.optString("date").ifBlank {
                     obj.optStringOrNull("created_at")?.take(10).orEmpty()
                 },
-                speakers = speakers,
                 durationSeconds = obj.optDouble("duration_seconds", 0.0),
                 folderUrl = obj.optStringOrNull("drive_folder_url"),
                 transcriptUrl = obj.optStringOrNull("drive_transcript_url"),

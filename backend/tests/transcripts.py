@@ -10,13 +10,13 @@ from app.models import TranscriptSegment
 
 
 def _segs(pairs: list[tuple[str, str]]) -> list[TranscriptSegment]:
+    """[pairs] נשארת (תווית, טקסט) לנוחות הקריאה של התמלולים למטה, אבל
+    התווית עצמה לא נכנסת ל-TranscriptSegment - התמלול שטוח, בלי דוברים."""
     out, t = [], 0.0
-    for spk, text in pairs:
+    for _spk, text in pairs:
         dur = max(len(text.split()) / 2.2, 1.0)
         out.append(
             TranscriptSegment(
-                speaker_label=spk,
-                speaker_tag=1 if spk == "אני" else 2,
                 text=text,
                 start_seconds=t,
                 end_seconds=t + dur,

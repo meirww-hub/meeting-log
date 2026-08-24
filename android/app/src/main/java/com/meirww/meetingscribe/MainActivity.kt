@@ -131,9 +131,6 @@ class MainActivity : AppCompatActivity() {
     private val requestCallLogLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
-    private val requestContactsLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
-
     private val requestNotificationsLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -152,9 +149,6 @@ class MainActivity : AppCompatActivity() {
         }
         binding.chatButton.setOnClickListener {
             startActivity(Intent(this, ChatActivity::class.java))
-        }
-        binding.unidentifiedSpeakersButton.setOnClickListener {
-            startActivity(Intent(this, UnidentifiedSpeakersActivity::class.java))
         }
 
         updateThemeToggleIcon()
@@ -218,9 +212,9 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * הכנת האיסוף האוטומטי של הקלטות שיחה מ-cally: הרשאת מצב טלפון (לזיהוי
-     * סיום שיחה), הרשאת יומן שיחות (לשליפת שם איש הקשר לתיוג "הצד השני" -
-     * ראה CallImportWorker) והרשאת Shizuku (לקריאת התיקייה החסומה של cally).
-     * נקראת בכל פתיחה כי הרשאת Shizuku פוקעת כשהשירות מופעל מחדש אחרי אתחול.
+     * סיום שיחה), הרשאת יומן שיחות (לזיהוי שיחה חדשה) והרשאת Shizuku (לקריאת
+     * התיקייה החסומה של cally). נקראת בכל פתיחה כי הרשאת Shizuku פוקעת כשהשירות
+     * מופעל מחדש אחרי אתחול.
      */
     private fun setUpCallAutoImport() {
         val hasPhoneState = ContextCompat.checkSelfPermission(
@@ -235,15 +229,6 @@ class MainActivity : AppCompatActivity() {
         ) == PackageManager.PERMISSION_GRANTED
         if (!hasCallLog) {
             requestCallLogLauncher.launch(Manifest.permission.READ_CALL_LOG)
-        }
-
-        // בלי ההרשאה הזו הצד השני בשיחה מתויג לפי CACHED_NAME שביומן השיחות -
-        // צילום מטמוני שלא מתעדכן. ראה CallImportWorker.contactNameForNumber.
-        val hasContacts = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.READ_CONTACTS
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!hasContacts) {
-            requestContactsLauncher.launch(Manifest.permission.READ_CONTACTS)
         }
 
         if (ShizukuAccess.isAvailable() && !ShizukuAccess.hasPermission()) {

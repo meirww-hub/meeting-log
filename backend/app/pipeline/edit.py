@@ -1,9 +1,8 @@
 """עריכה ומחיקה של הקלטה קיימת ממסך ההיסטוריה באפליקציה.
 
 כל שינוי מקומי (Firestore) משתקף גם ב-Drive, כפי שהמשתמש ביקש: כותרת חדשה
-משנה את שם כל קבצי ההקלטה, שינוי שם דובר מעדכן את קובץ התמלול, והערה
-נשמרת כ-Google Doc בתיקיית "הערות". ראה PATCH/DELETE /recordings/{id}
-ב-main.py.
+משנה את שם כל קבצי ההקלטה, והערה נשמרת כ-Google Doc בתיקיית "הערות". ראה
+PATCH/DELETE /recordings/{id} ב-main.py.
 
 מאז שקבצי ההקלטה מסודרים ב-Drive לפי סוג ולא לפי פגישה (ראה
 services/drive.py), פעולה "על ההקלטה" היא פעולה על רשימת הקבצים שלה -
@@ -14,8 +13,6 @@ _recording_file_ids מרכז אותה. הקלטות ישנות, שעדיין י�
 import datetime
 
 from app.models import RecordingUpdateRequest
-from app.pipeline import speaker_id
-from app.pipeline.speakers import display_label, replace_labels, speakers_in_order
 from app.services import drive, firestore_store
 
 # הקלטה קצרה מ-5 דקות שלא נערכה נמחקת אוטומטית 48 שעות אחרי יצירתה
@@ -24,7 +21,7 @@ from app.services import drive, firestore_store
 #
 # הסף כאן גבוה מסף השליחה שבאפליקציה (AudioDuration.MIN_PROCESSING_SECONDS,
 # 180 שניות) ובכוונה: הקלטה של 3-5 דקות כן מתעבדת ונכנסת להיסטוריה, ומקבלת
-# 48 שעות שבהן די בעריכה אחת (כותרת/דובר/הערה) כדי לפטור אותה מהמחיקה
+# 48 שעות שבהן די בעריכה אחת (כותרת/הערה) כדי לפטור אותה מהמחיקה
 # לצמיתות. השניים לא כבולים זה לזה - שינוי אחד לא משנה את השני.
 _MAX_AUTO_DELETE_DURATION_SECONDS = 300
 _AUTO_DELETE_MIN_AGE = datetime.timedelta(hours=48)
@@ -34,7 +31,7 @@ _AUTO_DELETE_MIN_AGE = datetime.timedelta(hours=48)
 # "saving_to_drive": שם זה כן שייך - תהליך שנהרג באמצע השלב הזה נשאר תקוע
 # בדיוק כמו כל שלב אחר, גם אם ריצה חדשה מאותה נקודה הייתה יוצרת כפילות.
 _NONTERMINAL_STATUSES = (
-    "queued", "transcribing", "identifying_speakers", "summarizing", "saving_to_drive",
+    "queued", "transcribing", "summarizing", "saving_to_drive",
 )
 
 # כמה זמן מותר להקלטה להישאר בסטטוס ביניים לפני שרואים בה תקועה.
@@ -49,26 +46,12 @@ _NONTERMINAL_STATUSES = (
 _STALE_PROCESSING_THRESHOLD = datetime.timedelta(minutes=30)
 
 
-def _transcript_to_text(segments: list[dict]) -> str:
-    """כמו drive._transcript_to_text, אבל על הקטעים כפי שהם שמורים ב-Firestore
-    (dict ולא TranscriptSegment). שתי הגרסאות מוכרחות לייצר את אותו טקסט
-    בדיוק, אחרת מסמך התמלול ב-Drive משנה צורה בכל עריכת שם דובר.
-    speaker_confident חסר בהקלטות שנשמרו לפני האימות האקוסטי, ושם ברירת
-    המחדל היא "ודאי" - בדיוק כמו במודל."""
-    return "\n\n".join(
-        f"{display_label(s['speaker_label'], s.get('speaker_confident', True))}:\n{s['text']}"
-        for s in segments
-    )
-
-
 def _doc_id(recording: dict, id_field: str, url_field: str) -> str | None:
     """מזהה מסמך Drive, עם נפילה לחילוץ מתוך ה-URL השמור.
 
     ה-URL נשמר תמיד, המזהה לא: drive_transcript_doc_id לא נכתב ל-Firestore
-    ב-65 ההקלטות הראשונות (תוקן ב-pipeline.py), ולכן עדכון מסמך התמלול
-    בעריכת שם דובר פשוט לא רץ - התמלול באפליקציה התעדכן והמסמך ב-Drive
-    נשאר עם התוויות הישנות. החילוץ מה-URL מחזיר גם את ההקלטות הישנות
-    לתיקון, בלי מיגרציה.
+    ב-65 ההקלטות הראשונות (תוקן ב-pipeline.py). החילוץ מה-URL מחזיר גם את
+    ההקלטות הישנות, בלי מיגרציה.
     """
     return recording.get(id_field) or drive.file_id_from_url(recording.get(url_field))
 
@@ -135,65 +118,6 @@ def apply_update(recording_id: str, recording: dict, payload: RecordingUpdateReq
                 drive.rename_folder(folder_id, f"{date} - {new_title}".strip(" -"))
             else:
                 drive.retitle_files(_recording_file_ids(recording), old_title, new_title)
-
-    renames = {
-        old.strip(): new.strip()
-        for old, new in (payload.speaker_renames or {}).items()
-        if old.strip() and new.strip() and old.strip() != new.strip()
-    }
-    if renames:
-        # התווית שהמשתמש בחר להחליף מוחלפת **בכל** מופעיה בתמלול, לא רק
-        # במופע הראשון: הוא ממלא במסך העריכה שם אחד לכל דובר, לפי סדר
-        # הופעתו, ומצפה שכל הקטעים של אותו דובר יקבלו אותו.
-        segments = recording.get("transcript") or []
-        for segment in segments:
-            new_label = renames.get(segment.get("speaker_label"))
-            if new_label:
-                segment["speaker_label"] = new_label
-
-        # נבנה מהתמלול עצמו ולא ממיפוי רשימת ה-speakers השמורה, כדי שגם
-        # הקלטות ישנות (שנשמרו כשהרשימה עוד מוינה א"ב) יעברו לסדר ההופעה.
-        updates["transcript"] = segments
-        updates["speakers"] = speakers_in_order(
-            s.get("speaker_label", "") for s in segments
-        ) or speakers_in_order(
-            renames.get(s, s) for s in (recording.get("speakers") or [])
-        )
-
-        # תיקון ידני של שם דובר הוא העדות האמינה ביותר שיש על זהות הקול -
-        # והיא נזרקה עד היום: המשתמש תיקן "דובר 2" ל-"רונית", ההקלטה הזו
-        # התעדכנה, ופרופיל הקול נשאר בלי שם וחזר על אותה טעות בהקלטה הבאה.
-        # מכאן והלאה התיקון נשמר על הפרופיל עצמו, ולכן חל על כל הקלטה חדשה
-        # שבה אותו קול יישמע. ההקלטות שכבר נשמרו לא נסרקות (ראה speaker_id.py).
-        profile_ids = dict(recording.get("speaker_profile_ids") or {})
-        if profile_ids:
-            for old_label, new_label in renames.items():
-                profile_id = profile_ids.pop(old_label, None)
-                if profile_id:
-                    speaker_id.learn_name_from_correction(profile_id, new_label)
-                    profile_ids[new_label] = profile_id
-            updates["speaker_profile_ids"] = profile_ids
-
-        transcript_doc_id = _doc_id(
-            recording, "drive_transcript_doc_id", "drive_transcript_url"
-        )
-        if transcript_doc_id and segments:
-            drive.update_text_doc(transcript_doc_id, _transcript_to_text(segments))
-
-        # הסיכום נשמר כטקסט חופשי (לא מבנה עם הפניה לתוויות), אז שינוי שם
-        # דובר דורש חיפוש-והחלפה מילולי בתוכו - גם ב-Firestore וגם במסמך
-        # הסיכום ב-Drive - אחרת מסך הסיכום ימשיך להציג "דובר 1" גם אחרי
-        # שהמשתמש שינה את השם במסך ההקלטות. זה קריטי במיוחד מאז שהסיכום
-        # מייחס אמירות לדובר בשמו ("דובר 1 אמר ש...") - ראה summarize.py.
-        summary = recording.get("summary") or ""
-        if summary:
-            summary = replace_labels(summary, renames)
-            updates["summary"] = summary
-            summary_doc_id = _doc_id(
-                recording, "drive_summary_doc_id", "drive_summary_url"
-            )
-            if summary_doc_id:
-                drive.update_summary_doc(summary_doc_id, summary)
 
     if payload.note is not None:
         updates["note"] = payload.note
