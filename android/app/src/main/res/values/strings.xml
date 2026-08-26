@@ -20,7 +20,7 @@
     <string name="link_audio">הקלטה</string>
 
     <string name="history_title">ההקלטות שלי</string>
-    <string name="history_search_hint">חיפוש לפי כותרת, דובר או הערה</string>
+    <string name="history_search_hint">חיפוש לפי כותרת או הערה</string>
     <string name="history_search_clear">נקה חיפוש</string>
     <string name="history_date_range">תאריכים</string>
     <string name="history_clear_filters">נקה סינון</string>
@@ -78,7 +78,7 @@
     <string name="chat_chip_remove">הסרה מהבחירה</string>
 
     <string name="chat_picker_title">בחרו הקלטות</string>
-    <string name="chat_picker_search_hint">חיפוש לפי כותרת, דובר, הערה או תאריך</string>
+    <string name="chat_picker_search_hint">חיפוש לפי כותרת, הערה או תאריך</string>
     <string name="chat_picker_select_all">בחרו הכל</string>
     <string name="chat_picker_clear_selection">נקו בחירה</string>
     <string name="chat_picker_selected_only">רק הנבחרות</string>

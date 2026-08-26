@@ -35,7 +35,7 @@ def get_recording(recording_id: str) -> dict | None:
 
 
 def update_recording_fields(recording_id: str, **fields) -> None:
-    """עדכון חלקי (merge) של הקלטה קיימת - לעריכת כותרת/דוברים/הערה
+    """עדכון חלקי (merge) של הקלטה קיימת - לעריכת כותרת/הערה
     מהאפליקציה (ראה PATCH /recordings/{id} ו-pipeline/edit.py). בשונה
     מ-set_recording_status, לא נוגע בשדה status."""
     doc_ref = _client().collection(_RECORDINGS_COLLECTION).document(recording_id)

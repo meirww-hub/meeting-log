@@ -901,7 +901,7 @@ def update_text_doc(doc_id: str, new_full_text: str) -> None:
 def update_summary_doc(doc_id: str, new_full_text: str) -> None:
     """מחליף את תוכן קובץ הסיכום. אותו דבר בדיוק כמו update_text_doc, אלא
     שהעיצוב נבנה מחדש (_summary_to_rtl_html) - אחרת עריכה מהאפליקציה
-    (שינוי שמות דוברים) או צירוף קובץ היו מחזירים את הסיכום לטקסט שטוח."""
+    (שינוי כותרת/הערה) או צירוף קובץ היו מחזירים את הסיכום לטקסט שטוח."""
     drive = _drive_client()
     drive.files().update(
         fileId=doc_id, media_body=_html_media(new_full_text, _summary_to_rtl_html)

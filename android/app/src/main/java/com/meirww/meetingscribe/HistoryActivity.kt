@@ -49,7 +49,7 @@ class HistoryActivity : AppCompatActivity() {
     // ה-Backend רץ על Cloud Run עם min-instances=0 (ראה
     // project_meetinglog_stuck_recordings_incident) - בקשה ראשונה אחרי חוסר
     // פעילות מעירה מופע קר, וברירת המחדל של OkHttp (10 שניות) קצרה מדי לזה:
-    // עריכת דובר/מחיקה נכשלת בשקט בפעם הראשונה ומצליחה בשנייה כשהמופע כבר חם.
+    // עריכת כותרת/מחיקה נכשלת בשקט בפעם הראשונה ומצליחה בשנייה כשהמופע כבר חם.
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
