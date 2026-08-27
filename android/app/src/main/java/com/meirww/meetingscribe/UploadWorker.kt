@@ -40,9 +40,6 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
          */
         const val KEY_SESSION_DIR = "session_dir"
 
-        /** שם איש הקשר של השיחה (רק בהקלטת שיחת טלפון) - ראה CallImportWorker. */
-        const val KEY_CONTACT_NAME = "contact_name"
-
         /**
          * מזהה יציב של מקור ההקלטה (מפתח השיחה אצל cally, או תיקיית ה-session
          * ושם הקובץ בהקלטת פגישה). השרת גוזר ממנו את מזהה ההקלטה, ולכן העלאה
@@ -121,11 +118,6 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
             )
         }
 
-        val contactName = inputData.getString(KEY_CONTACT_NAME).orEmpty()
-        if (contactName.isNotBlank()) {
-            bodyBuilder.addFormDataPart("contact_name", contactName)
-        }
-
         val clientUploadId = inputData.getString(KEY_CLIENT_UPLOAD_ID).orEmpty()
         if (clientUploadId.isNotBlank()) {
             bodyBuilder.addFormDataPart("client_upload_id", clientUploadId)
@@ -136,7 +128,7 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
         if (durationSeconds > 0) {
             bodyBuilder.addFormDataPart("duration_seconds", durationSeconds.toString())
         }
-        val notificationLabel = title.ifBlank { contactName }
+        val notificationLabel = title
 
         val requestBody = bodyBuilder.build()
 

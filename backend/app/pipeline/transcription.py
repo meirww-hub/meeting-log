@@ -1,8 +1,6 @@
-"""תמלול + הפרדת דוברים גנרית באמצעות Gemini API (הבנת אודיו מולטימודלית).
+"""תמלול פגישות גנרי באמצעות Gemini API (הבנת אודיו מולטימודלית).
 
-בשלב 1 אנו נשענים על יכולת ה-diarization המובנית של Gemini (מחזיר speaker_tag
-מספרי לכל קטע). בשלב 2 נשלים זאת עם pyannote.audio כדי לקבל גם
-speaker embeddings להתאמה מול פרופילים שמורים (ראו pipeline/speaker_id.py).
+התמלול הוא זרם שטוח של קטעי דיבור - בלי זיהוי דוברים; רק טקסט וחותמות זמן.
 """
 
 import json
@@ -14,32 +12,25 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.models import TranscriptSegment
-from app.pipeline import speaker_embedding
+from app.pipeline.audio_silence import segment_is_silent
 from app.pipeline._retry import call_with_retry
 
 from app.pipeline._model import GEMINI_MAX_OUTPUT_TOKENS as _MAX_OUTPUT_TOKENS
 from app.pipeline._model import GEMINI_MODEL as _MODEL
 
 
-class _DiarizedSegment(BaseModel):
-    speaker_tag: int
+class _Segment(BaseModel):
     text: str
     start_seconds: float
     end_seconds: float
 
-
-class _SingleChannelSegment(BaseModel):
-    text: str
-    start_seconds: float
-    end_seconds: float
 
 _SYSTEM_PROMPT = """\
-אתה מתמלל פגישות מדויק. תמלל את קובץ האודיו המצורף במדויק, תוך זיהוי מעברים
-בין דוברים שונים לפי הקול (diarization). פלט חייב להיות JSON תקני בלבד,
-ללא טקסט נוסף.
+אתה מתמלל פגישות מדויק. תמלל את קובץ האודיו המצורף במדויק. פלט חייב להיות
+JSON תקני בלבד, ללא טקסט נוסף.
 """
 
-# כלל השפה משותף לשני מסלולי התמלול (פגישה עם diarization / ערוץ שיחה מבודד),
+# כלל השפה משותף לשני מסלולי התמלול (פגישה מלאה / ערוץ שיחה מבודד),
 # כי הוא אותה דרישה בדיוק ואסור שהם ייפרדו בטעות.
 #
 # **לא להחזיר הוראה שמכתיבה שפה קבועה** ("תמלל בשפה he-IL"). כך זה היה עד
@@ -63,21 +54,8 @@ _LANGUAGE_RULE = """\
 _SCHEMA_HINT = """\
 החזר מערך JSON של קטעי דיבור, לפי סדר כרונולוגי, במבנה הבא בדיוק:
 [
-  {{"speaker_tag": 1, "text": "...", "start_seconds": 0.0, "end_seconds": 3.2}}
+  {{"text": "...", "start_seconds": 0.0, "end_seconds": 3.2}}
 ]
-speaker_tag הוא מספר עוקב לכל דובר (1, 2, 3...) - אותו דובר תמיד אותו מספר
-לאורך כל ההקלטה.
-
-לגבי חלוקת הדוברים:
-  • מספר הדוברים אינו ידוע מראש. אל תניחו שניים, ואל תנסו להגיע למספר
-    "עגול" - החזירו בדיוק כמה שנשמעים.
-  • **אסור** ששני אנשים שונים יקבלו את אותו speaker_tag. כששני קולות
-    דומים (אותו מין, אותו גיל, אותו מבטא) - הפרידו ביניהם לפי מה שנשמע
-    בפועל, לא לפי מי הגיוני שידבר עכשיו.
-  • באותה מידה, אל תפצלו אדם אחד לשני מספרים כשהוא מרים או מנמיך את הקול,
-    מתלהב, מתקרב או מתרחק מהמיקרופון.
-  • מעבר דובר קורה בין קטעים, לא בתוכם: אם באמצע קטע התחלף הדובר - סיימו
-    את הקטע שם ופתחו קטע חדש.
 
 {language_rule}"""
 
@@ -99,13 +77,6 @@ _RESUME_RULE = """\
 הקטע הראשון שתחזיר יתחיל בסביבות שנייה {done_seconds:.0f}).
 """
 
-_RESUME_SPEAKER_RULE = """\
-שמור על אותו מספור דוברים כמו קודם - אלה אותם אנשים. אלה הקטעים האחרונים
-שתומללו, כדי שתדע איזה מספר שייך למי:
-{tail}
-"""
-
-
 class IncompleteTranscriptError(RuntimeError):
     """התמלול נקטע ולא הצליח להשלים את ההקלטה עד סופה.
 
@@ -121,16 +92,15 @@ class HallucinatedTranscriptError(RuntimeError):
     (למשל מיקרופון שלא תפס כלום, או קובץ פגום).
 
     נמצא ב-2026-08-17: הקלטה אמיתית (לא בדיקה) נשמרה כ"done" עם תמלול
-    ודוברים פיקטיביים - כולל פרופיל דובר שהצביע לרגע שקט לגמרי באודיו,
-    ולכן לא השמיע כלום במסך "דוברים לא מזוהים". בלי הבדיקה הזו אין שום
-    סימן שהתמלול לא באמת קרה. כישלון גלוי כאן מגיע להיסטוריה ולניסיון
-    חוזר, בדיוק כמו IncompleteTranscriptError.
+    פיקטיבי על רגע שקט לגמרי באודיו. בלי הבדיקה הזו אין שום סימן שהתמלול
+    לא באמת קרה. כישלון גלוי כאן מגיע להיסטוריה ולניסיון חוזר, בדיוק כמו
+    IncompleteTranscriptError.
     """
 
 
-# כמה מהקטעים הארוכים ביותר בודקים בפועל מול האודיו - תקרה, לא רצפה
-# (כמו _MAX_SAMPLE_SEGMENTS ב-speaker_id.py): מספיק כדי לא להיתפס על קטע
-# בודד שנחתך בטעות על רעש, בלי לפענח את כל ההקלטה בשביל הבדיקה.
+# כמה מהקטעים הארוכים ביותר בודקים בפועל מול האודיו - תקרה, לא רצפה. מספיק
+# כדי לא להיתפס על קטע בודד שנחתך בטעות על רעש, בלי לפענח את כל ההקלטה
+# בשביל הבדיקה.
 _MAX_SILENCE_CHECK_SEGMENTS = 3
 
 # קטע קצר מזה לא נבדק: RMS על פחות משנייה וחצי רועש מדי כדי להבחין בין
@@ -153,7 +123,7 @@ def _verify_segments_are_audible(
     if not ranked:
         return
     if all(
-        speaker_embedding.segment_is_silent(audio_path, s.start_seconds, s.end_seconds)
+        segment_is_silent(audio_path, s.start_seconds, s.end_seconds)
         for s in ranked
     ):
         raise HallucinatedTranscriptError(
@@ -225,7 +195,6 @@ def _transcribe_in_full(
     system_prompt: str,
     schema_hint: str,
     response_schema,
-    speaker_tail: bool,
     client: genai.Client | None = None,
 ) -> list[dict]:
     """מתמלל קובץ שלם, גם כשהתשובה לא נכנסת לבקשה אחת.
@@ -256,12 +225,6 @@ def _transcribe_in_full(
         prompt = schema_hint
         if round_index > 0:
             prompt += _RESUME_RULE.format(done_seconds=covered_seconds)
-            if speaker_tail:
-                tail = "\n".join(
-                    f"דובר {item.get('speaker_tag')}: {item.get('text', '')}"
-                    for item in collected[-5:]
-                )
-                prompt += _RESUME_SPEAKER_RULE.format(tail=tail)
 
         response = call_with_retry(
             client.models.generate_content,
@@ -313,22 +276,19 @@ def _transcribe_in_full(
     return collected
 
 
-def transcribe_with_diarization(
-    audio_path: str, max_speakers: int = 6, client: genai.Client | None = None
+def transcribe_meeting(
+    audio_path: str, client: genai.Client | None = None
 ) -> list[TranscriptSegment]:
     items = _transcribe_in_full(
         audio_path=audio_path,
         system_prompt=_SYSTEM_PROMPT,
         schema_hint=_SCHEMA_HINT.format(language_rule=_LANGUAGE_RULE),
-        response_schema=list[_DiarizedSegment],
-        speaker_tail=True,
+        response_schema=list[_Segment],
         client=client,
     )
 
     segments = [
         TranscriptSegment(
-            speaker_label=f"דובר {item['speaker_tag']}",
-            speaker_tag=item["speaker_tag"],
             text=item["text"],
             start_seconds=item["start_seconds"],
             end_seconds=item["end_seconds"],
@@ -351,22 +311,15 @@ _SINGLE_CHANNEL_SCHEMA_HINT = """\
 [
   {{"text": "...", "start_seconds": 0.0, "end_seconds": 3.2}}
 ]
-אל תכלול שדה דובר - כל הקטעים שייכים לאותו דובר יחיד.
 
 {language_rule}"""
 
 
 def transcribe_single_channel(
     audio_path: str,
-    speaker_label: str,
-    speaker_tag: int,
     client: genai.Client | None = None,
 ) -> list[TranscriptSegment]:
-    """תמלול ערוץ מבודד של דובר יחיד (צד אחד בשיחת טלפון).
-
-    כשההקלטה מגיעה משני ערוצים נפרדים, ההפרדה בין הדוברים כבר קיימת ברמת
-    הקובץ - ולכן אין צורך ב-diarization, וזיהוי הדובר יוצא ודאי במקום
-    ניחוש לפי מאפייני קול (ראה transcribe_with_diarization לעומת זאת).
+    """תמלול ערוץ מבודד של צד אחד בשיחת טלפון.
 
     [client] - ראה _transcribe_in_full: שיחת טלפון קוראת לפונקציה הזו
     פעמיים ברצף (ערוץ שלי, ערוץ שני), ו-process_call_recording מעביר לשתי
@@ -376,15 +329,12 @@ def transcribe_single_channel(
         audio_path=audio_path,
         system_prompt=_SINGLE_CHANNEL_SYSTEM_PROMPT,
         schema_hint=_SINGLE_CHANNEL_SCHEMA_HINT.format(language_rule=_LANGUAGE_RULE),
-        response_schema=list[_SingleChannelSegment],
-        speaker_tail=False,
+        response_schema=list[_Segment],
         client=client,
     )
 
     segments = [
         TranscriptSegment(
-            speaker_label=speaker_label,
-            speaker_tag=speaker_tag,
             text=item["text"],
             start_seconds=item["start_seconds"],
             end_seconds=item["end_seconds"],

@@ -79,10 +79,6 @@ class TestGuardrails:
 
 
 class TestCounters:
-    def test_word_count_ignores_speaker_labels(self):
-        segs = _segs([("דובר מספר אחד", "שלום מה נשמע"), ("אני", "הכל טוב")])
-        assert _word_count(segs) == 5
-
     def test_figure_count_counts_words_containing_digits(self):
         segs = _segs([("אני", "המחיר הוא 4,200 שקל ב-15 בספטמבר")])
         assert _figure_count(segs) == 2
@@ -100,7 +96,6 @@ class TestPromptRendering:
             figure_count=figure_count,
             min_topics=topics,
             min_words=words,
-            uncertainty_rule="",
         )
 
     def test_no_unfilled_placeholders(self):
@@ -110,13 +105,7 @@ class TestPromptRendering:
         """הסכמה בפרומפט משתמשת ב-{{ }} - קל לשבור אותה בטעות בעריכה."""
         out = self._render()
         assert out.count("{") == out.count("}")
-        assert '"title"' in out and '"speaker_names"' in out
-
-    def test_attribution_rule_demands_the_exact_transcript_label(self):
-        """הסיכום מייחס אמירות בשם הדובר, והשם מוחלף אחר כך בחיפוש מילולי -
-        אז הפרומפט חייב לדרוש את הכתיב המדויק של התווית (ראה edit.py)."""
-        out = self._render()
-        assert "אמר" in out and "בדיוק כפי שהוא מופיע בתמלול" in out
+        assert '"title"' in out and '"todos"' in out
 
     def test_computed_numbers_reach_the_prompt(self):
         topics, words = _summary_budget(3900, 156)

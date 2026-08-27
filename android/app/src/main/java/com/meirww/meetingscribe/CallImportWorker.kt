@@ -1,14 +1,8 @@
 package com.meirww.meetingscribe
 
-import android.Manifest
 import android.content.Context
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.provider.CallLog
-import android.provider.ContactsContract
 import android.telephony.TelephonyManager
-import androidx.core.content.ContextCompat
 import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -27,7 +21,8 @@ import kotlinx.coroutines.withContext
  *
  * cally שומרת כל שיחה כשני קבצים מבודדים, `__uplink` (הצד שלי) ו-`__downlink`
  * (הצד השני), עם קידומת משותפת של חותמת זמן ומזהה שיחה. שני הקבצים נשלחים
- * יחד לשרת, שמתמלל כל ערוץ בנפרד - וכך זיהוי הדוברים יוצא ודאי.
+ * יחד לשרת, שמתמלל כל ערוץ בנפרד - איכות ובידוד שמע טובים יותר מתמלול של
+ * הקלטה ממוזגת.
  */
 class CallImportWorker(appContext: Context, params: WorkerParameters) :
     CoroutineWorker(appContext, params) {
@@ -41,15 +36,6 @@ class CallImportWorker(appContext: Context, params: WorkerParameters) :
         private const val UNIQUE_WORK_NAME = "cally_call_import"
 
         private const val RETRY_BACKOFF_SECONDS = 20L
-
-        /**
-         * סטייה מותרת (שניות) בין זמן סיום השיחה ביומן השיחות (DATE+DURATION)
-         * לבין הזמן שבו cally סיימה לכתוב את הקובץ, כדי שעדיין ניחשב אותה
-         * שיחה. נדיב בכוונה (סיום כתיבת cally, הפרשי שעון בין stat ל-CallLog),
-         * אבל קטן בהרבה מהפער לשיחה הבאה שממש קרתה אחר כך - ראה
-         * mostRecentCallerName.
-         */
-        private const val CALL_LOG_MATCH_TOLERANCE_SECONDS = 90L
 
         /** קידומת למיפוי מזהה-הקלטה-בשרת -> מפתח השיחה אצל cally. */
         private const val KEY_RECORDING_PREFIX = "recording_"
@@ -142,13 +128,6 @@ class CallImportWorker(appContext: Context, params: WorkerParameters) :
             return@withContext if (stillWriting.isEmpty()) Result.success() else Result.retry()
         }
 
-        // שם איש הקשר משויך רק כשיש בדיוק שיחה חדשה אחת בהרצה הזו - אם
-        // כמה שיחות מיובאות יחד (למשל אחרי שהמכשיר היה כבוי זמן-מה), אין
-        // דרך פשוטה לשייך איזו רשומת יומן שיחות שייכת לאיזה קובץ, ולכן
-        // מוותרים על השם (נופל חזרה לתווית הגנרית "הצד השני" - לא רגרסיה,
-        // זה בדיוק מה שהיה קורה עד היום).
-        val contactName = if (ready.size == 1) mostRecentCallerName(ready.single()) else null
-
         val destDir = File(applicationContext.getExternalFilesDir("callimport"), "")
         destDir.mkdirs()
 
@@ -197,7 +176,6 @@ class CallImportWorker(appContext: Context, params: WorkerParameters) :
                                 (downlinkFile?.absolutePath ?: ""),
                             // בלי כותרת - השרת מייצר כותרת לפי תוכן השיחה.
                             UploadWorker.KEY_TITLE to "",
-                            UploadWorker.KEY_CONTACT_NAME to (contactName ?: ""),
                             UploadWorker.KEY_CLIENT_UPLOAD_ID to callKey,
                             // האורך שכבר נמדד למעלה - כך תג האורך והניקוי
                             // האוטומטי מסתמכים על השיחה עצמה ולא על סוף הדיבור.
@@ -262,103 +240,4 @@ class CallImportWorker(appContext: Context, params: WorkerParameters) :
         return destination.exists() && destination.length() > 0
     }
 
-    /**
-     * שם הדובר שבצד השני, כפי שהוא שמור **ברשימת אנשי הקשר של הטלפון**.
-     *
-     * מקור האמת הוא ContactsContract ולא CACHED_NAME שביומן השיחות:
-     * CACHED_NAME הוא צילום מטמוני שנכתב פעם אחת, בזמן השיחה, ולא מתעדכן
-     * אחר כך - איש קשר ששמו תוקן או שנשמר רק אחרי השיחה נשאר שם ריק או
-     * מיושן, וזה בדיוק השם שהיה נדבק לתמלול ולסיכום. PhoneLookup מצליב את
-     * המספר מול אנשי הקשר החיים ומחזיר את השם הנוכחי בדיוק כפי שהוא כתוב
-     * שם - בלי לחתוך, בלי לנרמל וכולל שם משפחה.
-     *
-     * CACHED_NAME נשאר כגיבוי, למקרה שהרשאת אנשי הקשר לא ניתנה.
-     * מחזיר null אם אין רשומות תואמות או שהמספר לא שמור באנשי הקשר.
-     *
-     * **לא לוקחים סתם את הרשומה האחרונה ביומן** - זו הייתה התקלה: בין ניתוק
-     * השיחה לריצת הסריקה בפועל (ה-worker מתעכב 20 שניות ומעלה, ועם retry
-     * על Shizuku/רשת יכול להתעכב הרבה יותר; ו"נסה שוב מ-cally" מההיסטוריה
-     * מריץ את אותה סריקה על שיחה ישנה, מול יומן השיחות **של עכשיו**) יכולה
-     * להתקבל שיחה נוספת - גם החטאה קצרה - שהופכת לרשומה "הכי טרייה" ביומן,
-     * ונדבקת בטעות לשיחה שבאמת מיובאת (ראה תקלת שיוך שיחה לאיש קשר לא נכון,
-     * 2026-08-19). לכן מחפשים את רשומת היומן שזמן הסיום שלה (DATE+DURATION)
-     * קרוב בפועל לזמן שבו cally סיימה לכתוב את קובצי [group] - לא סתם את
-     * הראשונה במיון.
-     */
-    private fun mostRecentCallerName(group: CallImportScan.CallGroup): String? {
-        val hasCallLog = ContextCompat.checkSelfPermission(
-            applicationContext, Manifest.permission.READ_CALL_LOG
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!hasCallLog) return null
-
-        val callEndedAtSeconds = group.files.maxOf { it.modifiedEpochSeconds }
-
-        val call = applicationContext.contentResolver.query(
-            CallLog.Calls.CONTENT_URI,
-            arrayOf(
-                CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME,
-                CallLog.Calls.DATE, CallLog.Calls.DURATION,
-            ),
-            null, null,
-            "${CallLog.Calls.DATE} DESC",
-        )?.use { cursor ->
-            var matched: Pair<String, String?>? = null
-            while (cursor.moveToNext()) {
-                val startMillis =
-                    cursor.getLong(cursor.getColumnIndexOrThrow(CallLog.Calls.DATE))
-                val durationSeconds =
-                    cursor.getLong(cursor.getColumnIndexOrThrow(CallLog.Calls.DURATION))
-                val endedAtSeconds = startMillis / 1000 + durationSeconds
-                if (Math.abs(endedAtSeconds - callEndedAtSeconds) <=
-                    CALL_LOG_MATCH_TOLERANCE_SECONDS
-                ) {
-                    val number =
-                        cursor.getString(cursor.getColumnIndexOrThrow(CallLog.Calls.NUMBER))
-                    val cached =
-                        cursor.getString(cursor.getColumnIndexOrThrow(CallLog.Calls.CACHED_NAME))
-                    matched = number.orEmpty() to cached?.trim()?.takeIf { it.isNotEmpty() }
-                    break
-                }
-                // יומן השיחות ממוין מהחדש לישן: ברגע שהגענו לרשומה שהסתיימה
-                // מוקדם משמעותית מהקובץ, כל מה שאחריה רק ישן יותר - אין טעם
-                // להמשיך לסרוק.
-                if (endedAtSeconds < callEndedAtSeconds - CALL_LOG_MATCH_TOLERANCE_SECONDS) break
-            }
-            matched
-        } ?: return null
-
-        val (number, cachedName) = call
-        val raw = contactNameForNumber(number) ?: cachedName
-        return ContactName.toSpeakerLabel(raw)
-    }
-
-    /**
-     * שם התצוגה של המספר מתוך אנשי הקשר. PhoneLookup מבצע בעצמו את השוואת
-     * המספרים לפי כללי המדינה, ולכן "+972-50-123-4567" ביומן השיחות מותאם
-     * לאיש קשר ששמור כ-"050-1234567".
-     */
-    private fun contactNameForNumber(number: String): String? {
-        if (number.isBlank()) return null
-        val hasContacts = ContextCompat.checkSelfPermission(
-            applicationContext, Manifest.permission.READ_CONTACTS
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!hasContacts) return null
-
-        val uri = Uri.withAppendedPath(
-            ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number)
-        )
-        return try {
-            applicationContext.contentResolver.query(
-                uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    cursor.getString(
-                        cursor.getColumnIndexOrThrow(ContactsContract.PhoneLookup.DISPLAY_NAME)
-                    )?.trim()?.takeIf { it.isNotEmpty() }
-                } else null
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
 }

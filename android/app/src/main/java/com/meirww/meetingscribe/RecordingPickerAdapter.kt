@@ -55,7 +55,6 @@ class RecordingPickerAdapter(
         }
 
         val parts = mutableListOf(item.date.toDisplayDate())
-        if (item.speakers.isNotEmpty()) parts.add(item.speakers.joinToString(", "))
         parts.add(
             context.getString(
                 if (isReady) R.string.history_status_ready else R.string.history_status_processing

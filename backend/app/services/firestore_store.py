@@ -1,5 +1,4 @@
-"""מטא-דאטה של הקלטות (סטטוס עיבוד, תוצאות) ופרופילי דוברים (שם + embedding
-קול לזיהוי חוצה-הקלטות - ראה pipeline/speaker_id.py)."""
+"""מטא-דאטה של הקלטות (סטטוס עיבוד, תוצאות)."""
 
 import datetime
 
@@ -10,7 +9,6 @@ from app.services import usage_tracker
 from app.services.google_credentials import get_service_account_credentials
 
 _RECORDINGS_COLLECTION = "recordings"
-_SPEAKER_PROFILES_COLLECTION = "speaker_profiles"
 
 
 def _client() -> firestore.Client:
@@ -37,7 +35,7 @@ def get_recording(recording_id: str) -> dict | None:
 
 
 def update_recording_fields(recording_id: str, **fields) -> None:
-    """עדכון חלקי (merge) של הקלטה קיימת - לעריכת כותרת/דוברים/הערה
+    """עדכון חלקי (merge) של הקלטה קיימת - לעריכת כותרת/הערה
     מהאפליקציה (ראה PATCH /recordings/{id} ו-pipeline/edit.py). בשונה
     מ-set_recording_status, לא נוגע בשדה status."""
     doc_ref = _client().collection(_RECORDINGS_COLLECTION).document(recording_id)
@@ -239,130 +237,3 @@ def list_stale_recordings(
         stale.append(data)
     usage_tracker.record("reads", count=read_count)
     return stale
-
-
-# --- פרופילי דוברים (זיהוי לפי טביעת קול) --------------------------------
-#
-# פרופיל = {name (None כל עוד לא תויג), embedding (וקטור ממוצע), sample_count,
-# sample_recording_id/sample_channel/sample_start_seconds (מצביע להשמעה של
-# הדגימה האחרונה - למסך פרופילי הדוברים באפליקציה, גם לתיוג ראשוני וגם
-# לתיקון שם קיים)}.
-#
-# "מהיום והלאה" בכוונה: תיוג פרופיל לא סורק/מתקן הקלטות שכבר נשמרו - הוא
-# רק קובע את name, וההתאמה הבאה שתרוץ (על הקלטה חדשה) תשתמש בו. ראה
-# pipeline/speaker_id.py.
-
-
-def list_speaker_profiles(user_id: str) -> list[dict]:
-    """כל פרופילי הדוברים של המשתמש, כולל הלא-מתויגים - להתאמה מול קטע
-    חדש (ראה speaker_id.resolve_or_enroll)."""
-    docs = (
-        _client()
-        .collection(_SPEAKER_PROFILES_COLLECTION)
-        .where("user_id", "==", user_id)
-        .stream()
-    )
-    profiles = []
-    for doc in docs:
-        data = doc.to_dict()
-        data["profile_id"] = doc.id
-        profiles.append(data)
-    usage_tracker.record("reads", count=len(profiles))
-    return profiles
-
-
-def get_speaker_profile(profile_id: str) -> dict | None:
-    doc = _client().collection(_SPEAKER_PROFILES_COLLECTION).document(profile_id).get()
-    usage_tracker.record("reads")
-    if not doc.exists:
-        return None
-    data = doc.to_dict()
-    data["profile_id"] = doc.id
-    return data
-
-
-def find_speaker_profile_by_name(user_id: str, name: str) -> dict | None:
-    """הפרופיל הקיים בשם הזה, אם יש - כדי שהעשרה משיחת טלפון (contact_name
-    ודאי) תמזג לתוך אותו פרופיל ולא תיצור כפילות."""
-    docs = (
-        _client()
-        .collection(_SPEAKER_PROFILES_COLLECTION)
-        .where("user_id", "==", user_id)
-        .where("name", "==", name)
-        .limit(1)
-        .stream()
-    )
-    for doc in docs:
-        usage_tracker.record("reads")
-        data = doc.to_dict()
-        data["profile_id"] = doc.id
-        return data
-    usage_tracker.record("reads")
-    return None
-
-
-def create_speaker_profile(
-    user_id: str,
-    embedding: list[float],
-    sample: dict,
-    name: str | None = None,
-    name_source: str | None = None,
-) -> str:
-    """[sample] הוא מצביע ההשמעה - sample_recording_id/channel/start/end,
-    כפי שנבנה ב-speaker_id.SpeakerSample.as_fields(). [name_source] הוא מקור
-    השם (ראה speaker_id.NAME_SOURCE_*), שממנו נגזר מי רשאי לדרוס אותו."""
-    doc_ref = _client().collection(_SPEAKER_PROFILES_COLLECTION).document()
-    doc_ref.set({
-        "user_id": user_id,
-        "name": name,
-        "name_source": name_source,
-        "embedding": embedding,
-        "sample_count": 1,
-        **sample,
-        "created_at": firestore.SERVER_TIMESTAMP,
-        "updated_at": firestore.SERVER_TIMESTAMP,
-    })
-    usage_tracker.record("writes")
-    return doc_ref.id
-
-
-def update_speaker_profile(profile_id: str, **fields) -> None:
-    """עדכון פרופיל קיים - מיזוג embedding/sample_count (ראה speaker_id.py),
-    או תיוג name ממסך פרופילי הדוברים / מתיקון ידני של שם דובר בהקלטה."""
-    doc_ref = _client().collection(_SPEAKER_PROFILES_COLLECTION).document(profile_id)
-    doc_ref.set({**fields, "updated_at": firestore.SERVER_TIMESTAMP}, merge=True)
-    usage_tracker.record("writes")
-
-
-def delete_speaker_profile(profile_id: str) -> None:
-    """מוחק פרופיל דובר לצמיתות.
-
-    נחוץ כי פרופיל שגוי הוא לא רק שורה מיותרת במסך: כל עוד הוא קיים הוא
-    מתחרה על התאמות בכל הקלטה חדשה (ראה _best_match), ופרופיל שנבנה מרעש
-    או מקול מעורבב הוא בדיוק מה שגורם לשיוך שגוי. מחיקה היא הדרך היחידה
-    להוציא אותו מהמשחק - שינוי שם רק מחליף את התווית השגויה שיודבק.
-
-    ההקלטות שכבר נשמרו לא נוגעות: השם שהודבק בהן הוא חלק מהתמלול והסיכום,
-    ומחיקת הפרופיל משפיעה מכאן והלאה בלבד - בדיוק כמו תיוג.
-    """
-    _client().collection(_SPEAKER_PROFILES_COLLECTION).document(profile_id).delete()
-    usage_tracker.record("deletes")
-
-
-def existing_recording_ids(recording_ids: set[str]) -> set[str]:
-    """אילו מהמזהים האלה עדיין קיימים באוסף ההקלטות.
-
-    משמש את מסך פרופילי הדוברים: מצביע ההשמעה של פרופיל מפנה להקלטה
-    שיכולה בינתיים להימחק (ידנית, או בניקוי האוטומטי של הקלטות קצרות אחרי
-    48 שעות) - ואז לחיצה על "נגן" פשוט לא משמיעה כלום, בלי שום הסבר. עדיף
-    לומר למשתמש שהדגימה כבר לא קיימת.
-    """
-    if not recording_ids:
-        return set()
-    collection = _client().collection(_RECORDINGS_COLLECTION)
-    found = set()
-    for recording_id in recording_ids:
-        if collection.document(recording_id).get(field_paths=[]).exists:
-            found.add(recording_id)
-    usage_tracker.record("reads", count=len(recording_ids))
-    return found

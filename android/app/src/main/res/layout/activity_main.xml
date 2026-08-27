@@ -35,7 +35,7 @@
         android:contentDescription="@string/history_toggle_theme"
         app:layout_constraintTop_toTopOf="@id/headerText"
         app:layout_constraintBottom_toBottomOf="@id/headerText"
-        app:layout_constraintEnd_toStartOf="@id/unidentifiedSpeakersButton"
+        app:layout_constraintEnd_toStartOf="@id/chatButton"
         android:layout_marginEnd="16dp" />
 
     <ImageView
@@ -63,20 +63,6 @@
         app:layout_constraintTop_toTopOf="@id/headerText"
         app:layout_constraintBottom_toBottomOf="@id/headerText"
         app:layout_constraintEnd_toStartOf="@id/historyButton"
-        android:layout_marginEnd="16dp" />
-
-    <ImageView
-        android:id="@+id/unidentifiedSpeakersButton"
-        android:layout_width="28dp"
-        android:layout_height="28dp"
-        android:src="@drawable/ic_person"
-        android:background="?attr/selectableItemBackgroundBorderless"
-        android:clickable="true"
-        android:focusable="true"
-        android:contentDescription="@string/unidentified_speakers_title"
-        app:layout_constraintTop_toTopOf="@id/headerText"
-        app:layout_constraintBottom_toBottomOf="@id/headerText"
-        app:layout_constraintEnd_toStartOf="@id/chatButton"
         android:layout_marginEnd="16dp" />
 
     <TextView

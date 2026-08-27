@@ -157,9 +157,7 @@ def meeting(title: str) -> MeetingResult:
         title=title,
         date="2026-08-13",
         transcript=[
-            TranscriptSegment(
-                speaker_label="דני", speaker_tag=1, text="נתחיל", start_seconds=0.0, end_seconds=2.0
-            )
+            TranscriptSegment(text="נתחיל", start_seconds=0.0, end_seconds=2.0)
         ],
         summary="סיכום הפגישה",
         todos=[TodoItem(description="לשלוח הצעת מחיר", owner="דני", due_date="2026-08-20")],

@@ -12,7 +12,7 @@ import com.meirww.meetingscribe.databinding.SheetRecordingPickerBinding
 
 /**
  * גיליון תחתון לבחירת ההקלטות שהצ'אט ישאל עליהן: חיפוש חופשי, רשימה נגללת
- * עם כל פרטי ההקלטה (תאריך, דוברים, משך, סטטוס) וסימון מרובה.
+ * עם כל פרטי ההקלטה (תאריך, משך, סטטוס) וסימון מרובה.
  *
  * הבחירה מוחזרת גם בלחיצה על "אישור" וגם בסגירה רגילה של הגיליון, כדי שלא
  * ייווצר מצב שבו סימנו הקלטות והן נעלמו.
@@ -96,7 +96,6 @@ class RecordingPickerSheet(
             .filter { item ->
                 val matchesQuery = query.isBlank() ||
                     item.title.contains(query, ignoreCase = true) ||
-                    item.speakers.any { it.contains(query, ignoreCase = true) } ||
                     item.note?.contains(query, ignoreCase = true) == true ||
                     item.date.contains(query) ||
                     item.date.toDisplayDate().contains(query)

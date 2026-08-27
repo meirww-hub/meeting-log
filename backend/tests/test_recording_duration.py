@@ -22,8 +22,6 @@ def segments(*ends: float) -> list[TranscriptSegment]:
             text="דיבור",
             start_seconds=max(0.0, end - 1),
             end_seconds=end,
-            speaker_tag=1,
-            speaker_label="אני",
         )
         for end in ends
     ]
@@ -87,19 +85,17 @@ def test_meeting_upload_forwards_the_measured_length(upload_calls):
 
 
 def test_call_upload_forwards_the_measured_length(upload_calls):
-    """שיחה דו-ערוצית - הנתיב שבו הפרמטר בא אחרי contact_name."""
+    """שיחה דו-ערוצית."""
     client, calls = upload_calls
 
     upload(
         client,
         {"file": audio("uplink.m4a"), "file_downlink": audio("downlink.m4a")},
-        contact_name="גדעון",
         duration_seconds="236.7",
     )
 
     assert calls[0][0] == "call"
-    # השם והאורך לא התחלפו במסלול הפוזיציוני אל הפייפליין.
-    assert calls[0][-2:] == ("גדעון", 236.7)
+    assert calls[0][-1] == 236.7
 
 
 def test_upload_without_a_measurement_passes_zero(upload_calls):

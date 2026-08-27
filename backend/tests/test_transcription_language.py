@@ -13,7 +13,7 @@ from app.pipeline import transcription
 from app.pipeline.summarize import _SYSTEM_PROMPT as SUMMARY_SYSTEM_PROMPT
 
 
-def _diarization_prompt() -> str:
+def _meeting_prompt() -> str:
     return transcription._SCHEMA_HINT.format(language_rule=transcription._LANGUAGE_RULE)
 
 
@@ -29,7 +29,7 @@ class TestNoForcedLanguage:
     def test_no_bcp47_language_code_in_prompts(self):
         # "he-IL" / "en-US" וכל וריאנט אחר של קוד שפה
         bcp47 = re.compile(r"\b[a-z]{2}-[A-Z]{2}\b")
-        for prompt in (_diarization_prompt(), _single_channel_prompt()):
+        for prompt in (_meeting_prompt(), _single_channel_prompt()):
             assert not bcp47.search(prompt), f"קוד שפה קשיח בפרומפט: {prompt}"
 
     def test_settings_has_no_transcription_language(self):
@@ -37,11 +37,11 @@ class TestNoForcedLanguage:
 
 
 class TestLanguageRuleReachesBothPaths:
-    """שני המסלולים - פגישה (diarization) ושיחה (ערוץ מבודד) - חולקים כלל אחד,
+    """שני המסלולים - פגישה (זרם מלא) ושיחה (ערוץ מבודד) - חולקים כלל אחד,
     כדי שתיקון באחד לא ידלג על השני."""
 
-    def test_diarization_prompt_carries_the_rule(self):
-        assert transcription._LANGUAGE_RULE in _diarization_prompt()
+    def test_meeting_prompt_carries_the_rule(self):
+        assert transcription._LANGUAGE_RULE in _meeting_prompt()
 
     def test_single_channel_prompt_carries_the_rule(self):
         assert transcription._LANGUAGE_RULE in _single_channel_prompt()
@@ -54,7 +54,7 @@ class TestLanguageRuleReachesBothPaths:
     def test_prompts_still_format_cleanly(self):
         """הכלל מוזרק ב-.format() לתוך תבנית שמכילה JSON עם סוגריים מסולסלים -
         טעות בהכפלת הסוגריים תישבר כאן ולא בפרודקשן."""
-        for prompt in (_diarization_prompt(), _single_channel_prompt()):
+        for prompt in (_meeting_prompt(), _single_channel_prompt()):
             assert '"text"' in prompt and "{{" not in prompt
 
 

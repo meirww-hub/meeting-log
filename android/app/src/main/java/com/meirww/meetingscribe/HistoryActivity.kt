@@ -49,7 +49,7 @@ class HistoryActivity : AppCompatActivity() {
     // ה-Backend רץ על Cloud Run עם min-instances=0 (ראה
     // project_meetinglog_stuck_recordings_incident) - בקשה ראשונה אחרי חוסר
     // פעילות מעירה מופע קר, וברירת המחדל של OkHttp (10 שניות) קצרה מדי לזה:
-    // עריכת דובר/מחיקה נכשלת בשקט בפעם הראשונה ומצליחה בשנייה כשהמופע כבר חם.
+    // עריכת כותרת/מחיקה נכשלת בשקט בפעם הראשונה ומצליחה בשנייה כשהמופע כבר חם.
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -208,7 +208,6 @@ class HistoryActivity : AppCompatActivity() {
         val filtered = allRecordings.filter { item ->
             val matchesQuery = query.isBlank() ||
                 item.title.contains(query, ignoreCase = true) ||
-                item.speakers.any { it.contains(query, ignoreCase = true) } ||
                 item.note?.contains(query, ignoreCase = true) == true
             val matchesFrom = fromDate == null || item.date >= fromDate!!
             val matchesTo = toDate == null || item.date <= toDate!!
@@ -281,7 +280,6 @@ class HistoryActivity : AppCompatActivity() {
             }
             addAction(getString(R.string.attach_file)) { onAttachFileClicked(item) }
             addAction(getString(R.string.history_edit_title)) { showEditTitleDialog(item) }
-            addAction(getString(R.string.history_edit_speakers)) { showEditSpeakersDialog(item) }
             addAction(getString(R.string.history_edit_note)) { showEditNoteDialog(item) }
         }
         addAction(getString(R.string.history_delete)) { showDeleteConfirmDialog(item) }
@@ -335,51 +333,6 @@ class HistoryActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun showEditSpeakersDialog(item: RecordingItem) {
-        if (item.speakers.isEmpty()) {
-            Toast.makeText(this, R.string.history_no_speakers, Toast.LENGTH_SHORT).show()
-            return
-        }
-        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-        // הרשימה מגיעה מהשרת לפי סדר הופעת הדוברים בתמלול (ראה
-        // speakers.speakers_in_order), והמשתמש ממלא אותה לפי אותו סדר -
-        // לכן הסדר מוצג במפורש, וכל שדה נושא מעליו את התווית שהוא מחליף.
-        container.addView(TextView(this).apply {
-            setText(R.string.history_edit_speakers_hint)
-            setTextColor(ContextCompat.getColor(context, R.color.text_secondary))
-            textSize = 13f
-        })
-
-        val inputsBySpeaker = item.speakers.associateWith { speaker ->
-            EditText(this).apply { setText(speaker) }
-        }
-        inputsBySpeaker.entries.forEachIndexed { index, (speaker, input) ->
-            container.addView(TextView(this).apply {
-                text = getString(R.string.history_speaker_position, index + 1, speaker)
-                setTextColor(ContextCompat.getColor(context, R.color.text_secondary))
-                textSize = 12f
-                setPadding(0, (12 * resources.displayMetrics.density).toInt(), 0, 0)
-            })
-            container.addView(input)
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle(R.string.history_edit_speakers)
-            .setView(dialogPadding(container))
-            .setPositiveButton(R.string.history_save) { _, _ ->
-                val renames = inputsBySpeaker.mapNotNull { (oldName, input) ->
-                    val newName = input.text.toString().trim()
-                    if (newName.isNotBlank() && newName != oldName) oldName to newName else null
-                }.toMap()
-                if (renames.isNotEmpty()) {
-                    runPatch(item.recordingId, speakerRenames = renames)
-                }
-            }
-            .setNegativeButton(R.string.share_cancel, null)
-            .show()
-    }
-
     /**
      * מייבא מחדש מ-cally את השיחה שהעיבוד שלה נכשל ושולח אותה שוב.
      *
@@ -408,12 +361,11 @@ class HistoryActivity : AppCompatActivity() {
     private fun runPatch(
         recordingId: String,
         title: String? = null,
-        speakerRenames: Map<String, String>? = null,
         note: String? = null,
     ) {
         lifecycleScope.launch {
             val success = withContext(Dispatchers.IO) {
-                patchRecording(recordingId, title, speakerRenames, note)
+                patchRecording(recordingId, title, note)
             }
             if (success) {
                 loadRecordings()
@@ -438,16 +390,10 @@ class HistoryActivity : AppCompatActivity() {
     private fun patchRecording(
         recordingId: String,
         title: String?,
-        speakerRenames: Map<String, String>?,
         note: String?,
     ): Boolean {
         val json = JSONObject()
         title?.let { json.put("title", it) }
-        speakerRenames?.let { renames ->
-            val renamesJson = JSONObject()
-            renames.forEach { (oldName, newName) -> renamesJson.put(oldName, newName) }
-            json.put("speaker_renames", renamesJson)
-        }
         note?.let { json.put("note", it) }
 
         val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())

@@ -159,7 +159,7 @@ class _CapturingDrive:
 
 
 def test_editing_the_summary_keeps_the_styling(monkeypatch):
-    """שינוי שמות דוברים או צירוף קובץ מעדכנים את המסמך - והעיצוב חייב
+    """עריכת כותרת/הערה או צירוף קובץ מעדכנים את המסמך - והעיצוב חייב
     להיבנות מחדש, אחרת הסיכום היה חוזר לטקסט שטוח בעריכה הראשונה."""
     drive = _CapturingDrive()
     monkeypatch.setattr(drive_service, "_drive_client", lambda: drive)

@@ -20,7 +20,7 @@
     <string name="link_audio">הקלטה</string>
 
     <string name="history_title">ההקלטות שלי</string>
-    <string name="history_search_hint">חיפוש לפי כותרת, דובר או הערה</string>
+    <string name="history_search_hint">חיפוש לפי כותרת או הערה</string>
     <string name="history_search_clear">נקה חיפוש</string>
     <string name="history_date_range">תאריכים</string>
     <string name="history_clear_filters">נקה סינון</string>
@@ -47,16 +47,12 @@
     <string name="history_item_menu">אפשרויות</string>
     <string name="history_open_folder">פתח את התיקייה בדרייב</string>
     <string name="history_edit_title">ערוך כותרת</string>
-    <string name="history_edit_speakers">ערוך דוברים</string>
     <string name="history_edit_note">הערה</string>
     <string name="history_delete">מחק הקלטה</string>
     <string name="history_delete_confirm">למחוק את \"%1$s\"? הקבצים שלה יועברו לאשפה בדרייב וניתן יהיה לשחזר אותם משם.</string>
     <string name="history_delete_success">ההקלטה נמחקה</string>
     <string name="history_save">שמור</string>
     <string name="history_edit_error">שגיאה בשמירת השינוי, נסו שוב</string>
-    <string name="history_no_speakers">אין דוברים לעריכה בהקלטה זו</string>
-    <string name="history_edit_speakers_hint">הדוברים מסודרים לפי סדר הופעתם בתמלול - הראשון שדיבר למעלה. השם שתזינו יחליף את התווית בכל מופעיה בתמלול ובסיכום.</string>
-    <string name="history_speaker_position">%1$d. %2$s</string>
     <string name="history_results_count">נמצאו %1$d הקלטות</string>
     <string name="history_status_ready">מוכן</string>
     <string name="history_status_processing">בעיבוד</string>
@@ -82,7 +78,7 @@
     <string name="chat_chip_remove">הסרה מהבחירה</string>
 
     <string name="chat_picker_title">בחרו הקלטות</string>
-    <string name="chat_picker_search_hint">חיפוש לפי כותרת, דובר, הערה או תאריך</string>
+    <string name="chat_picker_search_hint">חיפוש לפי כותרת, הערה או תאריך</string>
     <string name="chat_picker_select_all">בחרו הכל</string>
     <string name="chat_picker_clear_selection">נקו בחירה</string>
     <string name="chat_picker_selected_only">רק הנבחרות</string>
@@ -112,20 +108,6 @@
     <string name="player_no_focus">אפליקציה אחרת מנגנת כרגע</string>
     <string name="player_pick_recording">מאיזו הקלטה להשמיע?</string>
     <string name="player_blocked_while_recording">הקלטה פעילה - עצרו אותה לפני האזנה, אחרת הניגון ייכנס לתוכה</string>
-
-    <string name="unidentified_speakers_title">פרופילי דוברים</string>
-    <string name="unidentified_speakers_subtitle">הקשיבו לקטע ותנו שם - מעכשיו והלאה הדובר הזה יזוהה אוטומטית לפי הקול, בכל הקלטה חדשה. אפשר גם לתקן שם שכבר קיים לדובר.</string>
-    <string name="unidentified_speakers_empty">עדיין אין פרופילי דוברים</string>
-    <string name="unidentified_speakers_load_error">שגיאה בטעינת הרשימה, נסו שוב</string>
-    <string name="unidentified_speaker_name_hint">שם הדובר</string>
-    <string name="unidentified_speaker_saved">השם נשמר</string>
-    <string name="speaker_profile_delete">מחק דובר</string>
-    <string name="speaker_profile_delete_confirm">למחוק את פרופיל הקול הזה? הוא לא ישמש יותר לזיהוי בהקלטות חדשות. הקלטות שכבר נשמרו לא ישתנו.</string>
-    <string name="speaker_profile_delete_unnamed">הדובר הלא מזוהה הזה</string>
-    <string name="speaker_profile_deleted">הפרופיל נמחק</string>
-    <string name="speaker_profile_delete_error">מחיקת הפרופיל נכשלה, נסו שוב</string>
-    <string name="speaker_profile_no_audio">הקטע לשמיעה כבר לא קיים - ההקלטה שממנה הוא נלקח נמחקה</string>
-    <string name="speaker_profile_samples">נשמע ב-%1$d הקלטות</string>
 
     <string name="share_receive_title">התקבלה הקלטת שיחה</string>
     <string name="share_receive_subtitle">שלחו אותה לעיבוד ב-Meeting Log כדי לקבל תמלול, סיכום ורשימת TO DO</string>

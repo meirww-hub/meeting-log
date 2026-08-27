@@ -15,8 +15,8 @@ import pytest
 
 from app.pipeline.summarize import summarize_and_extract_todos
 from app.pipeline.transcription import (
+    transcribe_meeting,
     transcribe_single_channel,
-    transcribe_with_diarization,
 )
 from tests import audio_fixtures
 
@@ -44,21 +44,21 @@ def _transcript_text(segments) -> str:
 def english_segments(tmp_path_factory):
     path = str(tmp_path_factory.mktemp("audio") / "english.wav")
     audio_fixtures.synthesize(audio_fixtures.ENGLISH_MEETING, path)
-    return transcribe_with_diarization(path)
+    return transcribe_meeting(path)
 
 
 @pytest.fixture(scope="module")
 def mixed_segments(tmp_path_factory):
     path = str(tmp_path_factory.mktemp("audio") / "mixed.wav")
     audio_fixtures.synthesize(audio_fixtures.MIXED_MEETING, path)
-    return transcribe_with_diarization(path)
+    return transcribe_meeting(path)
 
 
 @pytest.fixture(scope="module")
 def mixed_call_segments(tmp_path_factory):
     path = str(tmp_path_factory.mktemp("audio") / "call.wav")
     audio_fixtures.synthesize(audio_fixtures.MIXED_CALL_CHANNEL, path)
-    return transcribe_single_channel(path, "אני", 1)
+    return transcribe_single_channel(path)
 
 
 class TestEnglishStaysEnglish:
@@ -72,11 +72,6 @@ class TestEnglishStaysEnglish:
     def test_content_actually_transcribed(self, english_segments):
         text = _transcript_text(english_segments).lower()
         assert "contractor" in text and "47,200" in text.replace(" ", "")
-
-    def test_speaker_labels_are_generic_before_naming(self, english_segments):
-        """התיוג בשלב התמלול הוא "דובר N" בכל שפה - השם האמיתי מגיע רק
-        משלב הסיכום (ראה pipeline._apply_speaker_names)."""
-        assert {s.speaker_label for s in english_segments} == {"דובר 1", "דובר 2"}
 
 
 class TestMixedStaysMixed:
@@ -124,19 +119,19 @@ class TestSummaryIsAlwaysHebrew:
     """גם כשהתמלול אנגלי לגמרי - הסיכום, הכותרת והמשימות בעברית."""
 
     def test_summary_is_hebrew(self, summary_of_english):
-        _, summary, _, _ = summary_of_english
+        _, summary, _ = summary_of_english
         assert _has_hebrew(summary), summary
 
     def test_title_is_hebrew(self, summary_of_english):
-        title, _, _, _ = summary_of_english
+        title, _, _ = summary_of_english
         assert _has_hebrew(title), title
 
     def test_todos_are_hebrew(self, summary_of_english):
-        _, _, todos, _ = summary_of_english
+        _, _, todos = summary_of_english
         assert todos, "לא חולצו משימות מהפגישה האנגלית"
         assert all(_has_hebrew(t.description) for t in todos), [t.description for t in todos]
 
     def test_numbers_survive_the_translation(self, summary_of_english):
         """הסיכום מתרגם לעברית - אבל הסכומים חייבים לשרוד במדויק."""
-        _, summary, _, _ = summary_of_english
+        _, summary, _ = summary_of_english
         assert "47,200" in summary or "47200" in summary, summary

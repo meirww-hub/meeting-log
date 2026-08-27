@@ -21,7 +21,7 @@
             android:layout_height="wrap_content"
             android:textColor="@color/text_primary"
             android:textSize="15sp"
-            tools:text="דובר 1 אמר לעשות את זה." />
+            tools:text="הוחלט לעשות את זה." />
 
         <LinearLayout
             android:id="@+id/citationsContainer"
