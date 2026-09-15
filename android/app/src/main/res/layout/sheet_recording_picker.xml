@@ -89,6 +89,23 @@
             android:contentDescription="@string/history_search_clear" />
     </LinearLayout>
 
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="10dp">
+
+        <TextView
+            android:id="@+id/pickerFilterTitle"
+            style="@style/LinkChip"
+            android:text="@string/chat_picker_filter_title" />
+
+        <TextView
+            android:id="@+id/pickerFilterSummary"
+            style="@style/LinkChip"
+            android:text="@string/chat_picker_filter_summary" />
+    </LinearLayout>
+
     <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

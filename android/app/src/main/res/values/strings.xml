@@ -79,6 +79,9 @@
 
     <string name="chat_picker_title">בחרו הקלטות</string>
     <string name="chat_picker_search_hint">חיפוש לפי כותרת, הערה או תאריך</string>
+    <string name="chat_picker_search_hint_summary">חיפוש בתוך הסיכום</string>
+    <string name="chat_picker_filter_title">כותרת</string>
+    <string name="chat_picker_filter_summary">סיכום</string>
     <string name="chat_picker_select_all">בחרו הכל</string>
     <string name="chat_picker_clear_selection">נקו בחירה</string>
     <string name="chat_picker_selected_only">רק הנבחרות</string>

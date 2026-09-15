@@ -24,8 +24,12 @@ class RecordingPickerSheet(
     private val onDone: (Set<String>) -> Unit,
 ) {
 
+    /** סוג השדה שלפיו מחפשים כרגע; כותרת היא ברירת המחדל. */
+    private enum class FilterType { TITLE, SUMMARY }
+
     private val selected = initialSelection.toMutableSet()
     private var showSelectedOnly = false
+    private var filterType = FilterType.TITLE
 
     private val binding = SheetRecordingPickerBinding.inflate(LayoutInflater.from(context))
     private val dialog = BottomSheetDialog(context)
@@ -62,6 +66,10 @@ class RecordingPickerSheet(
         }
         binding.pickerClearSearch.setOnClickListener { binding.pickerSearchInput.setText("") }
 
+        binding.pickerFilterTitle.setOnClickListener { setFilterType(FilterType.TITLE) }
+        binding.pickerFilterSummary.setOnClickListener { setFilterType(FilterType.SUMMARY) }
+        updateFilterTypeButtons()
+
         binding.pickerSelectAll.setOnClickListener {
             selected.addAll(visibleRecordings().map { it.recordingId })
             updateCounters()
@@ -94,15 +102,53 @@ class RecordingPickerSheet(
         val query = binding.pickerSearchInput.text?.toString()?.trim().orEmpty()
         return recordings
             .filter { item ->
-                val matchesQuery = query.isBlank() ||
-                    item.title.contains(query, ignoreCase = true) ||
-                    item.note?.contains(query, ignoreCase = true) == true ||
-                    item.date.contains(query) ||
-                    item.date.toDisplayDate().contains(query)
+                val matchesQuery = query.isBlank() || when (filterType) {
+                    FilterType.TITLE ->
+                        item.title.contains(query, ignoreCase = true) ||
+                            item.note?.contains(query, ignoreCase = true) == true ||
+                            item.date.contains(query) ||
+                            item.date.toDisplayDate().contains(query)
+                    FilterType.SUMMARY ->
+                        item.summary?.contains(query, ignoreCase = true) == true
+                }
                 val matchesSelectedFilter = !showSelectedOnly || selected.contains(item.recordingId)
                 matchesQuery && matchesSelectedFilter
             }
             .sortedByDescending { it.date }
+    }
+
+    /** מחליף את שדה החיפוש הפעיל ומרענן את הרשימה והתווית. */
+    private fun setFilterType(type: FilterType) {
+        if (filterType == type) return
+        filterType = type
+        updateFilterTypeButtons()
+        applyFilter()
+    }
+
+    private fun updateFilterTypeButtons() {
+        binding.pickerFilterTitle.isSelected = filterType == FilterType.TITLE
+        binding.pickerFilterSummary.isSelected = filterType == FilterType.SUMMARY
+        binding.pickerFilterTitle.setBackgroundResource(
+            if (filterType == FilterType.TITLE) R.drawable.bg_chip_selected else R.drawable.bg_chip
+        )
+        binding.pickerFilterSummary.setBackgroundResource(
+            if (filterType == FilterType.SUMMARY) R.drawable.bg_chip_selected else R.drawable.bg_chip
+        )
+        val selectedTextColor = android.graphics.Color.WHITE
+        val unselectedTextColor = androidx.core.content.ContextCompat.getColor(context, R.color.accent_cyan)
+        binding.pickerFilterTitle.setTextColor(
+            if (filterType == FilterType.TITLE) selectedTextColor else unselectedTextColor
+        )
+        binding.pickerFilterSummary.setTextColor(
+            if (filterType == FilterType.SUMMARY) selectedTextColor else unselectedTextColor
+        )
+        binding.pickerSearchInput.hint = context.getString(
+            if (filterType == FilterType.SUMMARY) {
+                R.string.chat_picker_search_hint_summary
+            } else {
+                R.string.chat_picker_search_hint
+            }
+        )
     }
 
     private fun applyFilter() {

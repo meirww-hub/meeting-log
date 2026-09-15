@@ -48,6 +48,8 @@ data class RecordingItem(
      */
     val audioChannelCount: Int,
     val note: String?,
+    /** טקסט הסיכום המלא (שדה summary), לצורך חיפוש - לא מוצג כמות שהוא במסך זה. */
+    val summary: String?,
     /** זמן ההגעה לשרת (ISO 8601 עם offset, כפי שנשמר ב-Firestore) - לשעה שמוצגת ליד התאריך בהיסטוריה. */
     val createdAt: String?,
     /**
@@ -92,6 +94,7 @@ data class RecordingItem(
                     else -> 0
                 },
                 note = obj.optStringOrNull("note"),
+                summary = obj.optStringOrNull("summary"),
                 createdAt = obj.optStringOrNull("created_at"),
                 failed = failed,
                 error = obj.optStringOrNull("error"),
