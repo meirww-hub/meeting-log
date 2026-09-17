@@ -58,6 +58,11 @@ class RecordingsAdapter(
         val dateLabel = item.createdAt.toDisplayTime()?.let { "${item.date.toDisplayDate()}  $it" }
             ?: item.date.toDisplayDate()
         val parts = mutableListOf(dateLabel)
+        parts.add(
+            context.getString(
+                if (item.isPhoneCall) R.string.history_source_badge_call else R.string.history_source_badge_app
+            )
+        )
         parts.add(statusLabel)
         if (item.attachments.isNotEmpty()) {
             val badgeRes = if (item.attachments.any { it.isFailed }) {

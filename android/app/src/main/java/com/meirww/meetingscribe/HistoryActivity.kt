@@ -43,6 +43,7 @@ class HistoryActivity : AppCompatActivity() {
     }
 
     private enum class SortMode { NEWEST, OLDEST, TITLE }
+    private enum class SourceFilter { ALL, CALLS, APP }
 
     private lateinit var binding: ActivityHistoryBinding
 
@@ -64,6 +65,7 @@ class HistoryActivity : AppCompatActivity() {
     private var fromDate: String? = null
     private var toDate: String? = null
     private var sortMode: SortMode = SortMode.NEWEST
+    private var sourceFilter: SourceFilter = SourceFilter.ALL
     private var pendingAttachTarget: RecordingItem? = null
 
     private val filePickerLauncher =
@@ -95,6 +97,7 @@ class HistoryActivity : AppCompatActivity() {
         binding.clearSearchButton.setOnClickListener { binding.searchInput.setText("") }
         binding.dateRangeButton.setOnClickListener { pickDateRange() }
         binding.sortButton.setOnClickListener { cycleSort() }
+        binding.sourceFilterButton.setOnClickListener { cycleSourceFilter() }
         binding.clearFiltersButton.setOnClickListener { clearFilters() }
 
         loadRecordings()
@@ -194,11 +197,29 @@ class HistoryActivity : AppCompatActivity() {
         applyFilters()
     }
 
+    private fun cycleSourceFilter() {
+        sourceFilter = when (sourceFilter) {
+            SourceFilter.ALL -> SourceFilter.CALLS
+            SourceFilter.CALLS -> SourceFilter.APP
+            SourceFilter.APP -> SourceFilter.ALL
+        }
+        binding.sourceFilterButton.text = getString(
+            when (sourceFilter) {
+                SourceFilter.ALL -> R.string.history_source_filter_all
+                SourceFilter.CALLS -> R.string.history_source_filter_calls
+                SourceFilter.APP -> R.string.history_source_filter_app
+            }
+        )
+        applyFilters()
+    }
+
     private fun clearFilters() {
         binding.searchInput.setText("")
         fromDate = null
         toDate = null
         binding.dateRangeButton.text = getString(R.string.history_date_range)
+        sourceFilter = SourceFilter.ALL
+        binding.sourceFilterButton.text = getString(R.string.history_source_filter_all)
         applyFilters()
     }
 
@@ -211,7 +232,12 @@ class HistoryActivity : AppCompatActivity() {
                 item.note?.contains(query, ignoreCase = true) == true
             val matchesFrom = fromDate == null || item.date >= fromDate!!
             val matchesTo = toDate == null || item.date <= toDate!!
-            matchesQuery && matchesFrom && matchesTo
+            val matchesSource = when (sourceFilter) {
+                SourceFilter.ALL -> true
+                SourceFilter.CALLS -> item.isPhoneCall
+                SourceFilter.APP -> !item.isPhoneCall
+            }
+            matchesQuery && matchesFrom && matchesTo && matchesSource
         }
 
         val sorted = when (sortMode) {
@@ -222,7 +248,8 @@ class HistoryActivity : AppCompatActivity() {
 
         adapter.submitList(sorted)
 
-        val filtersActive = query.isNotBlank() || fromDate != null || toDate != null
+        val filtersActive = query.isNotBlank() || fromDate != null || toDate != null ||
+            sourceFilter != SourceFilter.ALL
         binding.clearFiltersButton.visibility = if (filtersActive) View.VISIBLE else View.GONE
 
         binding.emptyText.text = getString(

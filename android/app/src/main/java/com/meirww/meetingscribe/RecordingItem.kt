@@ -59,6 +59,13 @@ data class RecordingItem(
     val error: String? = null,
     val attachments: List<Attachment> = emptyList(),
 ) {
+    /**
+     * true אם זו שיחת טלפון שיובאה (cally): שני ערוצי אודיו מבודדים, uplink
+     * ו-downlink - ראה [CallImportWorker] ו-[audioChannelCount]. הקלטה
+     * שנוצרה מתוך האפליקציה או שותפה אליה יש לה ערוץ אחד בלבד.
+     */
+    val isPhoneCall: Boolean get() = audioChannelCount >= 2
+
     companion object {
         fun fromJson(obj: JSONObject): RecordingItem {
             val attachments = mutableListOf<Attachment>()

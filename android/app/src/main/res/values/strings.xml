@@ -64,6 +64,11 @@
     <string name="history_sort_newest">החדשות קודם</string>
     <string name="history_sort_oldest">הישנות קודם</string>
     <string name="history_sort_title_az">לפי כותרת (א-ת)</string>
+    <string name="history_source_badge_call">📞 שיחת טלפון</string>
+    <string name="history_source_badge_app">🎙️ הקלטת אפליקציה</string>
+    <string name="history_source_filter_all">מקור ההקלטה</string>
+    <string name="history_source_filter_calls">📞 שיחות טלפון</string>
+    <string name="history_source_filter_app">🎙️ הקלטות אפליקציה</string>
 
     <string name="chat_title">שאלות על הקלטות</string>
     <string name="chat_pick_recordings">בחרו הקלטות לשאול עליהן</string>

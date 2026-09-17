@@ -127,6 +127,11 @@
                 android:text="@string/history_sort_newest" />
 
             <TextView
+                android:id="@+id/sourceFilterButton"
+                style="@style/LinkChip"
+                android:text="@string/history_source_filter_all" />
+
+            <TextView
                 android:id="@+id/clearFiltersButton"
                 style="@style/LinkChip"
                 android:text="@string/history_clear_filters"
