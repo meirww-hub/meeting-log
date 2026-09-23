@@ -363,6 +363,13 @@ _SUMMARY_ITEM_STYLE = f"{_RTL}font-size:11pt;line-height:1.6;margin:0 0 6pt 0;"
 # "1. תקציב הפרויקט: מאיר אמר..." - הפורמט שהמודל מתבקש לכתוב בו את
 # הסיכום (ראה pipeline/summarize.py).
 _TOPIC_RE = re.compile(r"^(\d+)[.)]\s*(.+)$")
+
+# הספרה ב"1." היא תו "חלש" מבחינת כיווניות (Unicode Bidi), ובתור התו
+# הראשון בפסקת RTL - בלי שום תו עברי שמעגן אותו - הוא לפעמים נודד ימינה
+# ממקומו האמיתי בהמרה ל-Google Doc, כך שהמספור לא נראה בתחילת השורה.
+# RLM (Right-to-Left Mark) הוא תו בלתי-נראה שרק מסמן כיווניות RTL, ומעגן
+# את הספרה במקום הנכון בלי להופיע בעצמו.
+_RLM = "‏"
 # "--- קובץ מצורף: חשבונית.pdf ---" - המפריד שנוסף לסיכום כשמצרפים קובץ
 # (ראה pipeline/attachments.py).
 _SECTION_RE = re.compile(r"^-{3,}\s*(.+?)\s*-{3,}$")
@@ -468,11 +475,11 @@ def _summary_to_rtl_html(text: str) -> str:
             number, rest = topic.groups()
             title, body = _split_topic(rest)
             if title:
-                heading(f"{number}. {_emphasize(title)}")
+                heading(f"{_RLM}{number}. {_emphasize(title)}")
                 if body:
                     paragraph(_emphasize(body))
             else:
-                paragraph(f"<b>{number}.</b> {_emphasize(body)}")
+                paragraph(f"{_RLM}<b>{number}.</b> {_emphasize(body)}")
             continue
 
         paragraph(_emphasize(line))

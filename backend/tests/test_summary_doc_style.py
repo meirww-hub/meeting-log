@@ -48,9 +48,20 @@ def test_topic_becomes_a_heading_above_its_own_paragraph():
     html = drive_service._summary_to_rtl_html(SUMMARY)
 
     headings = blocks(html, "h2")
-    assert headings[0].startswith("1. תקציב הפרויקט")
-    assert headings[1].startswith("2. לוח זמנים")
+    assert headings[0].startswith(f"{drive_service._RLM}1. תקציב הפרויקט")
+    assert headings[1].startswith(f"{drive_service._RLM}2. לוח זמנים")
     assert "מאיר אמר" in blocks(html, "p")[0]
+
+
+def test_topic_number_is_anchored_with_a_leading_rtl_mark():
+    """הספרה שפותחת כותרת נושא היא תו "חלש" מבחינת כיווניות (Unicode Bidi),
+    ובלי תו RTL שמעגן אותה לפני שהיא מופיעה היא עלולה לנדוד מתחילת השורה
+    בהמרה ל-Google Doc. ה-RLM הבלתי-נראה מעגן אותה במקום בלי להופיע בעצמו."""
+    html = drive_service._summary_to_rtl_html(SUMMARY)
+
+    for heading in blocks(html, "h2"):
+        assert heading.startswith(drive_service._RLM)
+        assert heading[len(drive_service._RLM)].isdigit()
 
 
 def test_headings_stand_out_from_the_body():
@@ -124,7 +135,7 @@ def test_a_long_line_without_a_colon_stays_a_paragraph():
     html = drive_service._summary_to_rtl_html(long_line)
 
     assert not blocks(html, "h2")
-    assert blocks(html, "p")[0].startswith("<b>1.</b> מאיר סקר")
+    assert blocks(html, "p")[0].startswith(f"{drive_service._RLM}<b>1.</b> מאיר סקר")
 
 
 def test_free_text_is_not_dropped():
