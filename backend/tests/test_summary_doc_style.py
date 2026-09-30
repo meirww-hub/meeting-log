@@ -127,6 +127,33 @@ def test_a_long_line_without_a_colon_stays_a_paragraph():
     assert blocks(html, "p")[0].startswith("<b>1.</b> מאיר סקר")
 
 
+def test_topics_without_newlines_still_get_split_into_headings():
+    """המודל התבקש לכתוב "1. ...\\n2. ...\\n3. ..." אבל בפועל החזיר את כל
+    הנושאים כשורה רציפה אחת בלי מעברי שורה בכלל - נצפה בפועל, וגרם לכל
+    הסיכום להיראות כפסקה אחת ענקית בלי אף כותרת נושא."""
+    one_line_summary = (
+        "1. ניתוח תקלות: הועלו כשלים משמעותיים בתהליכי הייצור. "
+        "2. פערים בניהול: הועלתה ביקורת על העדר סגירת מעגל. "
+        "3. הצורך במתודולוגיה: הודגש הצורך ביישום קפדני של כלים קיימים."
+    )
+
+    html = drive_service._summary_to_rtl_html(one_line_summary)
+
+    headings = blocks(html, "h2")
+    assert headings[0].startswith("1. ניתוח תקלות")
+    assert headings[1].startswith("2. פערים בניהול")
+    assert headings[2].startswith("3. הצורך במתודולוגיה")
+
+
+def test_a_single_stray_number_is_not_mistaken_for_a_topic_list():
+    """מספר בודד באמצע משפט (לא רצף 1, 2, 3...) לא הופך לפיצול מלאכותי."""
+    html = drive_service._summary_to_rtl_html(
+        "1. תקציב: הפגישה עברה בשלב 2 של האישור ונקבע תקציב של 40 אלף ₪."
+    )
+
+    assert len(blocks(html, "h2")) == 1
+
+
 def test_free_text_is_not_dropped():
     """סיכום שלא נכתב במבנה הצפוי חייב להגיע למסמך במלואו."""
     html = drive_service._summary_to_rtl_html("שורה ראשונה\nשורה שנייה")

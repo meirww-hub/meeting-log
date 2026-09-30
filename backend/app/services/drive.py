@@ -376,6 +376,47 @@ _MARKDOWN_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 # סעיף לכותרת.
 _MAX_TOPIC_HEADING = 70
 
+# "2." או "13)" באמצע טקסט - מועמד לתחילת נושא חדש, רק אם מדובר ברצף עולה
+# שמתחיל ב-1 (ראה _insert_missing_topic_breaks).
+_TOPIC_MARKER_RE = re.compile(r"(?<![\d.])(\d{1,2})[.)]\s+")
+
+
+def _insert_missing_topic_breaks(text: str) -> str:
+    """כשהמודל מתבקש לכתוב "1. ...\\n2. ...\\n3. ..." אבל בפועל לפחות שני
+    נושאים ברצף מגיעים על אותה שורה בלי מעבר שורה ביניהם (נצפה בפועל למרות
+    ההנחיה המפורשת ב-pipeline/summarize.py - גם כשחלק מהמעברים כן קיימים,
+    למשל כשכותרת הנושא הראשון כן על שורה נפרדת אבל 2 עד 16 כולם נדחסים
+    יחד לשורה שאחריה) - הנושאים שנדחסו יחד נופלים לפסקה אחת ענקית בלי אף
+    כותרת נושא, כי _summary_to_rtl_html מזהה נושא רק בתחילת שורה.
+
+    כאן משחזרים את שבירות השורה החסרות: מאתרים רצף עולה של מספרים שמתחיל
+    ב-1 (1, 2, 3, ...) בטקסט כולו, בלי קשר לשבירות השורה הקיימות - זה סימן
+    אמין למספור נושאים ולא למספר מקרי בתוך משפט (תאריך, סכום, "שלב 2"
+    וכו') - ומוסיפים שבירת שורה לפני כל אחד מהם, רק היכן שאין כבר אחת.
+    """
+    boundaries = []
+    expected = 1
+    for match in _TOPIC_MARKER_RE.finditer(text):
+        if int(match.group(1)) != expected:
+            continue
+        boundaries.append(match.start())
+        expected += 1
+
+    # רצף בודד (רק "1.") לא מספיק כדי לבטוח בזיהוי - הוא יכול להיות מספר
+    # מקרי בתחילת משפט. שני נושאים ומעלה הם כבר רצף שלא קורה במקרה.
+    if len(boundaries) < 2:
+        return text
+
+    pieces = []
+    prev_end = 0
+    for pos in boundaries:
+        pieces.append(text[prev_end:pos])
+        if pos > 0 and text[pos - 1] != "\n":
+            pieces.append("\n")
+        prev_end = pos
+    pieces.append(text[prev_end:])
+    return "".join(pieces)
+
 _MONTHS = (
     "ינואר|פברואר|מרץ|מרס|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר"
 )
@@ -445,7 +486,7 @@ def _summary_to_rtl_html(text: str) -> str:
     def paragraph(content: str) -> None:
         blocks.append(f'<p dir="rtl" style="{_SUMMARY_BODY_STYLE}">{content}</p>')
 
-    for raw_line in text.split("\n"):
+    for raw_line in _insert_missing_topic_breaks(text).split("\n"):
         line = raw_line.strip()
         if not line:
             flush_bullets()
