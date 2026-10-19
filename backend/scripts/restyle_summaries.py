@@ -37,19 +37,19 @@ def _doc_id(recording: dict) -> str | None:
 def restyle(apply: bool) -> None:
     recordings = firestore_store.list_recordings(_USER_ID)
     candidates = [
-        (r.get("recording_id"), r.get("title") or r.get("date") or "", _doc_id(r), r["summary"])
+        (r.get("recording_id"), r.get("title") or r.get("date") or "", _doc_id(r), r["summary"], r.get("summary_written_at"))
         for r in recordings
         if (r.get("summary") or "").strip() and _doc_id(r)
     ]
     print(f"{len(candidates)} מתוך {len(recordings)} הקלטות עם סיכום ומסמך ב-Drive\n", flush=True)
 
     done, failed = 0, 0
-    for recording_id, title, doc_id, summary in candidates:
+    for recording_id, title, doc_id, summary, written_at in candidates:
         print(f"• {title} ({doc_id})", flush=True)
         if not apply:
             continue
         try:
-            drive_service.update_summary_doc(doc_id, summary)
+            drive_service.update_summary_doc(doc_id, summary, written_at)
             done += 1
         except HttpError as error:
             failed += 1

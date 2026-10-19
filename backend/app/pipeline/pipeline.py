@@ -114,6 +114,7 @@ def _summarize_and_save(
         summary=summary,
         todos=todos,
         duration_seconds=duration_seconds,
+        summary_written_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
     )
 
     firestore_store.set_recording_status(recording_id, user_id, "saving_to_drive")
@@ -140,6 +141,7 @@ def _summarize_and_save(
         date=result.date,
         duration_seconds=result.duration_seconds,
         summary=result.summary,
+        summary_written_at=result.summary_written_at,
         drive_folder_url=result.drive_folder_url,
         drive_transcript_url=result.drive_transcript_url,
         drive_transcript_doc_id=result.drive_transcript_doc_id,

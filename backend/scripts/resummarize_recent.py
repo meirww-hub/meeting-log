@@ -69,9 +69,12 @@ def resummarize(count: int, apply: bool) -> None:
 
         if not apply:
             continue
-        firestore_store.update_recording_fields(recording_id, summary=new_summary)
+        written_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        firestore_store.update_recording_fields(
+            recording_id, summary=new_summary, summary_written_at=written_at
+        )
         if doc_id:
-            drive_service.update_summary_doc(doc_id, new_summary)
+            drive_service.update_summary_doc(doc_id, new_summary, written_at)
         else:
             print("  ! אין doc_id בדרייב - עודכן רק ב-Firestore")
 
