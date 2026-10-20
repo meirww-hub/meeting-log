@@ -38,6 +38,7 @@ import datetime
 import html
 import io
 import re
+import zoneinfo
 from collections.abc import Iterator
 
 import requests
@@ -358,6 +359,7 @@ def _text_to_rtl_html(text: str) -> str:
 _RTL = "direction:rtl;text-align:right;"
 _SUMMARY_BODY_STYLE = f"{_RTL}font-size:11pt;line-height:1.6;margin:0 0 12pt 0;"
 _SUMMARY_TOPIC_STYLE = f"{_RTL}font-size:13pt;line-height:1.6;margin:18pt 0 6pt 0;"
+_SUMMARY_STAMP_STYLE = f"{_RTL}font-size:10pt;color:#666666;margin:0 0 12pt 0;"
 _SUMMARY_ITEM_STYLE = f"{_RTL}font-size:11pt;line-height:1.6;margin:0 0 6pt 0;"
 
 # "1. תקציב הפרויקט: מאיר אמר..." - הפורמט שהמודל מתבקש לכתוב בו את
@@ -418,8 +420,29 @@ def _split_topic(text: str) -> tuple[str, str]:
     return "", text
 
 
-def _summary_to_rtl_html(text: str) -> str:
+_STAMP_TZ = zoneinfo.ZoneInfo("Asia/Jerusalem")
+
+
+def _written_at_stamp(written_at: str | None) -> str:
+    """חותמת "נכתב ב-" משעת כתיבת הסיכום (ISO), בשעון ישראל. ריקה אם אין
+    זמן שמור (הקלטות מלפני החותמת) או שהוא לא תקין - עדיף בלי חותמת מאשר
+    חותמת מומצאת."""
+    if not written_at:
+        return ""
+    try:
+        moment = datetime.datetime.fromisoformat(written_at)
+    except ValueError:
+        return ""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=datetime.timezone.utc)
+    return "נכתב ב-" + moment.astimezone(_STAMP_TZ).strftime("%d/%m/%Y בשעה %H:%M")
+
+
+def _summary_to_rtl_html(text: str, written_at: str | None = None) -> str:
     """בונה את ה-HTML של מסמך הסיכום מהטקסט של הסיכום.
+
+    written_at (ISO) הוא הרגע שבו הסיכום נכתב, והוא מוצג בשורה הראשונה של
+    המסמך, מתחת לשם הקובץ - ללא קשר לרגע שבו המסמך הועלה או עודכן ב-Drive.
 
     כל נושא ממוספר הופך לכותרת (<h2>, שגם נכנסת למפתח המסמך ב-Google Docs
     ומאפשרת לקפוץ בין נושאים) ולפסקה מתחתיה, שורות תבליט הופכות לרשימה,
@@ -429,6 +452,10 @@ def _summary_to_rtl_html(text: str) -> str:
     """
     blocks: list[str] = []
     bullets: list[str] = []
+
+    stamp = _written_at_stamp(written_at)
+    if stamp:
+        blocks.append(f'<p dir="rtl" style="{_SUMMARY_STAMP_STYLE}">{stamp}</p>')
 
     def flush_bullets() -> None:
         if bullets:
@@ -481,8 +508,10 @@ def _summary_to_rtl_html(text: str) -> str:
     return _rtl_document("".join(blocks))
 
 
-def _html_media(text: str, to_html=_text_to_rtl_html) -> MediaIoBaseUpload:
-    return MediaIoBaseUpload(io.BytesIO(to_html(text).encode("utf-8")), mimetype="text/html")
+def _html_media(text: str, to_html=_text_to_rtl_html, **html_args) -> MediaIoBaseUpload:
+    return MediaIoBaseUpload(
+        io.BytesIO(to_html(text, **html_args).encode("utf-8")), mimetype="text/html"
+    )
 
 
 def _transcript_to_text(segments: list[TranscriptSegment]) -> str:
@@ -816,6 +845,7 @@ def save_meeting_to_drive(
         result.summary,
         _type_folder_id(drive, SUMMARY_FOLDER),
         _summary_to_rtl_html,
+        written_at=result.summary_written_at,
     )
     todo_file = _build_todo_spreadsheet(
         sheets,
@@ -863,13 +893,15 @@ def save_meeting_to_drive(
 
 
 def _upload_text_as_doc_full(
-    drive, name: str, text: str, folder_id: str, to_html=_text_to_rtl_html
+    drive, name: str, text: str, folder_id: str, to_html=_text_to_rtl_html, **html_args
 ) -> dict:
     metadata = {"name": name, "mimeType": _DOC_MIME, "parents": [folder_id]}
     file = (
         drive.files()
         .create(
-            body=metadata, media_body=_html_media(text, to_html), fields="id, webViewLink"
+            body=metadata,
+            media_body=_html_media(text, to_html, **html_args),
+            fields="id, webViewLink"
         )
         .execute()
     )
@@ -898,13 +930,17 @@ def update_text_doc(doc_id: str, new_full_text: str) -> None:
     drive.files().update(fileId=doc_id, media_body=_html_media(new_full_text)).execute()
 
 
-def update_summary_doc(doc_id: str, new_full_text: str) -> None:
+def update_summary_doc(
+    doc_id: str, new_full_text: str, written_at: str | None = None
+) -> None:
     """מחליף את תוכן קובץ הסיכום. אותו דבר בדיוק כמו update_text_doc, אלא
     שהעיצוב נבנה מחדש (_summary_to_rtl_html) - אחרת עריכה מהאפליקציה
-    (שינוי כותרת/הערה) או צירוף קובץ היו מחזירים את הסיכום לטקסט שטוח."""
+    (שינוי כותרת/הערה) או צירוף קובץ היו מחזירים את הסיכום לטקסט שטוח.
+    written_at חייב לעבור גם כאן (הערך השמור בהקלטה) - אחרת כל עדכון היה
+    מוחק את חותמת הזמן של הסיכום."""
     drive = _drive_client()
     drive.files().update(
-        fileId=doc_id, media_body=_html_media(new_full_text, _summary_to_rtl_html)
+        fileId=doc_id, media_body=_html_media(new_full_text, _summary_to_rtl_html, written_at=written_at),
     ).execute()
 
 

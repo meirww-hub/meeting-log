@@ -208,7 +208,9 @@ def _process_content(
 
     summary_doc_id = _summary_doc_id(recording)
     if summary_doc_id:
-        drive.update_summary_doc(summary_doc_id, merged_summary)
+        drive.update_summary_doc(
+            summary_doc_id, merged_summary, recording.get("summary_written_at")
+        )
 
     firestore_store.update_attachment(
         recording_id,

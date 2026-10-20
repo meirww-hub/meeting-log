@@ -20,6 +20,9 @@ class MeetingResult(BaseModel):
     summary: str
     todos: list[TodoItem]
     duration_seconds: float = 0.0
+    # הרגע (ISO, UTC) שבו הסיכום נכתב - מוצג בראש מסמך הסיכום, ושמור כדי
+    # שעדכוני המסמך (צירוף קובץ וכו') ישמרו אותו ולא יחליפו אותו בזמן העדכון.
+    summary_written_at: str | None = None
     # drive_folder_id קיים רק בהקלטות מלפני המעבר לתיקיות לפי סוג, שלהן
     # עדיין יש תיקייה משלהן ב-Drive. drive_folder_url מצביע היום על ספריית
     # ה-Meeting Log כולה. ראה services/drive.py.
