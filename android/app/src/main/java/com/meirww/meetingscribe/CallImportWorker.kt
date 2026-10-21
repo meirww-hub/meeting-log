@@ -180,6 +180,11 @@ class CallImportWorker(appContext: Context, params: WorkerParameters) :
                             // האורך שכבר נמדד למעלה - כך תג האורך והניקוי
                             // האוטומטי מסתמכים על השיחה עצמה ולא על סוף הדיבור.
                             UploadWorker.KEY_DURATION_SECONDS to (callSeconds ?: 0.0),
+                            // cally כותבת את הקובץ עד סוף השיחה, ולכן זמן השינוי
+                            // האחרון פחות האורך הוא תחילת השיחה.
+                            UploadWorker.KEY_RECORDED_AT_MILLIS to
+                                (files.maxOf { it.modifiedEpochSeconds } * 1000 -
+                                    ((callSeconds ?: 0.0) * 1000).toLong()),
                         )
                     )
                     .build(),

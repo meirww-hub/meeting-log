@@ -31,7 +31,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -117,7 +116,7 @@ class HistoryActivity : AppCompatActivity() {
                 Toast.makeText(this@HistoryActivity, "שגיאה בטעינת ההקלטות", Toast.LENGTH_SHORT).show()
                 return@launch
             }
-            allRecordings = result.sortedByDescending { it.date }
+            allRecordings = result.sortedByDescending { it.sortKey }
             applyFilters()
         }
     }
@@ -153,29 +152,26 @@ class HistoryActivity : AppCompatActivity() {
     }
 
     private fun pickDateRange() {
-        val calendar = Calendar.getInstance()
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        android.app.DatePickerDialog(
-            this,
-            { _, fromYear, fromMonth, fromDay ->
-                val pickedFrom = Calendar.getInstance().apply { set(fromYear, fromMonth, fromDay) }
-                android.app.DatePickerDialog(
-                    this,
-                    { _, toYear, toMonth, toDay ->
-                        val pickedTo = Calendar.getInstance().apply { set(toYear, toMonth, toDay) }
-                        fromDate = dateFormat.format(pickedFrom.time)
-                        toDate = dateFormat.format(pickedTo.time)
-                        binding.dateRangeButton.text =
-                            "${fromDate?.toDisplayDate()} - ${toDate?.toDisplayDate()}"
-                        applyFilters()
-                    },
-                    fromYear, fromMonth, fromDay,
-                ).show()
-            },
-            calendar.get(Calendar.YEAR),
-            calendar.get(Calendar.MONTH),
-            calendar.get(Calendar.DAY_OF_MONTH),
-        ).show()
+        // בורר טווח אחד (מ-עד) במקום שני דיאלוגים נפרדים שלא ברור מי מהם "מתאריך".
+        // MaterialDatePicker עובד ב-UTC חצות, ולכן התאריכים מומרים ל-UTC גם בחזרה.
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+        val builder = com.google.android.material.datepicker.MaterialDatePicker.Builder.dateRangePicker()
+            .setTitleText(R.string.history_date_range)
+        val currentFrom = fromDate?.let { runCatching { dateFormat.parse(it)?.time }.getOrNull() }
+        val currentTo = toDate?.let { runCatching { dateFormat.parse(it)?.time }.getOrNull() }
+        if (currentFrom != null && currentTo != null) {
+            builder.setSelection(androidx.core.util.Pair(currentFrom, currentTo))
+        }
+        val picker = builder.build()
+        picker.addOnPositiveButtonClickListener { range ->
+            fromDate = dateFormat.format(java.util.Date(range.first))
+            toDate = dateFormat.format(java.util.Date(range.second))
+            binding.dateRangeButton.text = "${fromDate?.toDisplayDate()} - ${toDate?.toDisplayDate()}"
+            applyFilters()
+        }
+        picker.show(supportFragmentManager, "date_range")
     }
 
     private fun cycleSort() {
@@ -215,8 +211,8 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         val sorted = when (sortMode) {
-            SortMode.NEWEST -> filtered.sortedByDescending { it.date }
-            SortMode.OLDEST -> filtered.sortedBy { it.date }
+            SortMode.NEWEST -> filtered.sortedByDescending { it.sortKey }
+            SortMode.OLDEST -> filtered.sortedBy { it.sortKey }
             SortMode.TITLE -> filtered.sortedBy { it.title }
         }
 

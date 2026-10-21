@@ -207,6 +207,10 @@ object RecordingRecovery {
                                 // פגישה שנגמרת בשתיקה נרשמת קצרה מכפי שהיא.
                                 UploadWorker.KEY_DURATION_SECONDS to
                                     (AudioDuration.seconds(audio) ?: 0.0),
+                                // שם התיקייה הוא session_<millis של תחילת ההקלטה>.
+                                UploadWorker.KEY_RECORDED_AT_MILLIS to
+                                    (sessionDir.name.removePrefix(SESSION_PREFIX)
+                                        .toLongOrNull() ?: 0L),
                             )
                         )
                         .build(),

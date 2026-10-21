@@ -62,6 +62,13 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
          */
         const val KEY_DURATION_SECONDS = "duration_seconds"
 
+        /**
+         * מתי ההקלטה התחילה בפועל (epoch millis) - לא מתי היא הועלתה. 0 = לא
+         * ידוע. ההעלאה יכולה להתעכב שעות (אין רשת, retry), ולכן זמן ההגעה לשרת
+         * אינו זמן ההקלטה; המסך "ההקלטות שלי" מציג ומסנן לפי הזמן הזה.
+         */
+        const val KEY_RECORDED_AT_MILLIS = "recorded_at_millis"
+
         // אפליקציה חד-משתמשית (הדרייב האישי של הבעלים) - אין צורך בזיהוי
         // ריבוי-משתמשים כרגע.
         private const val OWNER_USER_ID = "primary_user"
@@ -128,6 +135,10 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
         if (durationSeconds > 0) {
             bodyBuilder.addFormDataPart("duration_seconds", durationSeconds.toString())
         }
+        val recordedAtMillis = inputData.getLong(KEY_RECORDED_AT_MILLIS, 0L)
+        if (recordedAtMillis > 0) {
+            bodyBuilder.addFormDataPart("recorded_at", formatRecordedAt(recordedAtMillis))
+        }
         val notificationLabel = title
 
         val requestBody = bodyBuilder.build()
@@ -180,6 +191,11 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
             Result.retry()
         }
     }
+
+    private fun formatRecordedAt(millis: Long): String =
+        java.time.OffsetDateTime
+            .ofInstant(java.time.Instant.ofEpochMilli(millis), java.time.ZoneId.systemDefault())
+            .toString()
 
     /**
      * מוחק את תיקיית ה-session רק כשלא נותר בה אודיו שממתין לשליחה - פגישה

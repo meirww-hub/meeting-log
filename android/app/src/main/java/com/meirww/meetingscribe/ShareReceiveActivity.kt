@@ -30,6 +30,9 @@ class ShareReceiveActivity : AppCompatActivity() {
     private lateinit var binding: ActivityShareReceiveBinding
     private var copiedAudioFile: File? = null
 
+    // מתי הקובץ המשותף נוצר (לא מתי שותף); נופל לעכשיו אם המקור לא מדווח.
+    private var recordedAtMillis: Long = 0L
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityShareReceiveBinding.inflate(layoutInflater)
@@ -76,6 +79,7 @@ class ShareReceiveActivity : AppCompatActivity() {
             }
 
             copiedAudioFile = file
+            recordedAtMillis = sourceModifiedMillis(sourceUri) ?: System.currentTimeMillis()
             binding.shareUploadButton.isEnabled = true
         }
     }
@@ -100,6 +104,17 @@ class ShareReceiveActivity : AppCompatActivity() {
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun sourceModifiedMillis(uri: Uri): Long? = try {
+        contentResolver.query(
+            uri, arrayOf(android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+            null, null, null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).takeIf { it > 0 } else null
+        }
+    } catch (e: Exception) {
+        null
     }
 
     private fun extensionFor(uri: Uri): String {
@@ -133,6 +148,7 @@ class ShareReceiveActivity : AppCompatActivity() {
                     UploadWorker.KEY_CLIENT_UPLOAD_ID to audioFile.name,
                     UploadWorker.KEY_DURATION_SECONDS to
                         (AudioDuration.seconds(audioFile) ?: 0.0),
+                    UploadWorker.KEY_RECORDED_AT_MILLIS to recordedAtMillis,
                 )
             )
             .build()

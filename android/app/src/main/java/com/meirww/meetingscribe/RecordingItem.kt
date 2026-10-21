@@ -48,7 +48,11 @@ data class RecordingItem(
      */
     val audioChannelCount: Int,
     val note: String?,
-    /** זמן ההגעה לשרת (ISO 8601 עם offset, כפי שנשמר ב-Firestore) - לשעה שמוצגת ליד התאריך בהיסטוריה. */
+    /**
+     * מתי ההקלטה התחילה בפועל (ISO 8601 עם offset), כפי שהטלפון דיווח בהעלאה.
+     * לשעה שמוצגת ליד התאריך בהיסטוריה. הקלטות ישנות נופלות על זמן ההגעה
+     * לשרת (created_at), שהוא קירוב.
+     */
     val createdAt: String?,
     /**
      * הקלטה שהעיבוד שלה נכשל. עד 2026-08-13 הרשימה כללה "done" בלבד, ולכן
@@ -59,6 +63,14 @@ data class RecordingItem(
     val error: String? = null,
     val attachments: List<Attachment> = emptyList(),
 ) {
+    /** רגע ההקלטה למיון (epoch millis); 0 כשאין זמן תקין. */
+    val sortKey: Long
+        get() = try {
+            OffsetDateTime.parse(createdAt).toInstant().toEpochMilli()
+        } catch (e: Exception) {
+            0L
+        }
+
     companion object {
         fun fromJson(obj: JSONObject): RecordingItem {
             val attachments = mutableListOf<Attachment>()
@@ -66,6 +78,7 @@ data class RecordingItem(
                 for (i in 0 until arr.length()) attachments.add(Attachment.fromJson(arr.getJSONObject(i)))
             }
             val failed = obj.optString("status") == "error"
+            val recordedAt = obj.optStringOrNull("recorded_at")
             val audioUrl = obj.optStringOrNull("drive_audio_url")
             // הקלטות ישנות נשמרו עם הקישור בלבד, בלי רשימת מזהי הקבצים -
             // להן יש ערוץ אחד, זה שהקישור מצביע עליו.
@@ -77,9 +90,10 @@ data class RecordingItem(
                 },
                 // הקלטה שנכשלה לא הגיעה לשלב שבו נקבע התאריך, ולכן נופלים
                 // על מועד ההגעה לשרת - אחרת השורה מוצגת בלי תאריך כלל.
-                date = obj.optString("date").ifBlank {
-                    obj.optStringOrNull("created_at")?.take(10).orEmpty()
-                },
+                date = recordedAt?.toLocalIsoDate()
+                    ?: obj.optString("date").ifBlank {
+                        obj.optStringOrNull("created_at")?.take(10).orEmpty()
+                    },
                 durationSeconds = obj.optDouble("duration_seconds", 0.0),
                 folderUrl = obj.optStringOrNull("drive_folder_url"),
                 transcriptUrl = obj.optStringOrNull("drive_transcript_url"),
@@ -92,7 +106,7 @@ data class RecordingItem(
                     else -> 0
                 },
                 note = obj.optStringOrNull("note"),
-                createdAt = obj.optStringOrNull("created_at"),
+                createdAt = recordedAt ?: obj.optStringOrNull("created_at"),
                 failed = failed,
                 error = obj.optStringOrNull("error"),
                 attachments = attachments,
@@ -136,6 +150,13 @@ fun String?.toDisplayTime(): String? {
     } catch (e: Exception) {
         null
     }
+}
+
+/** התאריך (yyyy-MM-dd) של רגע ISO נתון לפי אזור הזמן של המכשיר; null אם הפורמט לא תקין. */
+internal fun String.toLocalIsoDate(): String? = try {
+    OffsetDateTime.parse(this).atZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDate().toString()
+} catch (e: Exception) {
+    null
 }
 
 /** גרסה מקוצרת (DD/MM) לשימוש במקומות צרים כמו שבבי הבחירה בצ'אט. */

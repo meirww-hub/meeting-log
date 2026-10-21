@@ -104,6 +104,7 @@ async def upload_recording(
     user_id: str = Form(...),
     client_upload_id: str = Form(""),
     duration_seconds: float = Form(0.0),
+    recorded_at: str = Form(""),
 ) -> dict:
     """העלאת הקלטה לעיבוד.
 
@@ -119,6 +120,10 @@ async def upload_recording(
     duration_seconds הוא אורך האודיו כפי שנמדד בטלפון לפני ההעלאה (ראה
     AudioDuration.kt). בלעדיו האורך נגזר מסוף הדיבור האחרון בתמלול - קירוב
     שמעוות כל הקלטה עם שתיקה בסופה. ראה pipeline._duration_of.
+
+    recorded_at הוא מועד תחילת ההקלטה עצמה (ISO 8601 עם offset), כפי שהטלפון
+    יודע אותו - לא מועד ההגעה לשרת (created_at), שיכול לפגר בשעות כשאין רשת.
+    האפליקציה מציגה ומסננת לפיו.
     """
     if client_upload_id:
         recording_id = recording_id_for_upload(user_id, client_upload_id)
@@ -145,7 +150,8 @@ async def upload_recording(
     with audio_path.open("wb") as out_file:
         shutil.copyfileobj(file.file, out_file)
 
-    firestore_store.set_recording_status(recording_id, user_id, "queued")
+    extra = {"recorded_at": recorded_at} if recorded_at else {}
+    firestore_store.set_recording_status(recording_id, user_id, "queued", **extra)
 
     if file_downlink is not None:
         downlink_path = tmp_dir / f"{recording_id}_downlink_{file_downlink.filename}"
