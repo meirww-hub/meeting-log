@@ -435,7 +435,7 @@ def _written_at_stamp(written_at: str | None) -> str:
         return ""
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=datetime.timezone.utc)
-    return "נכתב ב-" + moment.astimezone(_STAMP_TZ).strftime("%d/%m/%Y בשעה %H:%M")
+    return "הוקלטה ב-" + moment.astimezone(_STAMP_TZ).strftime("%d/%m/%Y בשעה %H:%M")
 
 
 def _summary_to_rtl_html(text: str, written_at: str | None = None) -> str:

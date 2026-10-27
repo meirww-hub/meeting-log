@@ -89,6 +89,11 @@ def _duration_of(
     return max((s.end_seconds for s in segments), default=0.0)
 
 
+def _recorded_at_of(recording_id: str) -> str | None:
+    record = firestore_store.get_recording(recording_id) or {}
+    return record.get("recorded_at") or None
+
+
 def _summarize_and_save(
     recording_id: str,
     user_id: str,
@@ -114,7 +119,10 @@ def _summarize_and_save(
         summary=summary,
         todos=todos,
         duration_seconds=duration_seconds,
-        summary_written_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        # החותמת במסמך הסיכום היא מועד ההקלטה עצמה כפי שהטלפון דיווח (ראה
+        # POST /recordings); רק בהקלטה בלי נתון כזה היא נופלת על רגע העיבוד.
+        summary_written_at=_recorded_at_of(recording_id)
+        or datetime.datetime.now(datetime.timezone.utc).isoformat(),
     )
 
     firestore_store.set_recording_status(recording_id, user_id, "saving_to_drive")

@@ -188,11 +188,11 @@ def test_written_at_stamp_is_the_first_line_in_israel_time():
     לשם הקובץ - לפני כל נושא."""
     html = drive_service._summary_to_rtl_html(SUMMARY, "2026-10-19T11:32:00+00:00")
 
-    assert html.index("נכתב ב-19/10/2026 בשעה 14:32") < html.index("<h2")
+    assert html.index("הוקלטה ב-19/10/2026 בשעה 14:32") < html.index("<h2")
 
 
 def test_no_stamp_without_written_at():
-    assert "נכתב ב-" not in drive_service._summary_to_rtl_html(SUMMARY)
+    assert "הוקלטה ב-" not in drive_service._summary_to_rtl_html(SUMMARY)
 
 
 def test_updating_the_summary_keeps_the_stamp(monkeypatch):
@@ -201,4 +201,4 @@ def test_updating_the_summary_keeps_the_stamp(monkeypatch):
 
     drive_service.update_summary_doc("doc-1", SUMMARY, "2026-10-19T11:32:00+00:00")
 
-    assert "נכתב ב-19/10/2026 בשעה 14:32" in drive.uploaded
+    assert "הוקלטה ב-19/10/2026 בשעה 14:32" in drive.uploaded
