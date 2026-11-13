@@ -201,8 +201,8 @@ class RecordingService : Service() {
         if (sessionDir != null) {
             RecordingRecovery.saveTitle(sessionDir, title)
         }
-        // האיחוד וההעלאה נעשים ב-WorkManager: הם שורדים סגירת אפליקציה,
-        // וגם אם משהו ייכשל כאן ההקלטה נשארת על הדיסק ותיסרק שוב.
+        // ההקלטה נשארת על הדיסק וממתינה ללחיצה על "שלח לעיבוד" (האיחוד
+        // וההעלאה רצים ב-WorkManager רק אז). הסריקה כאן רק משחררת סימון חי.
         RecordingRecovery.sweep(applicationContext)
 
         stopForeground(STOP_FOREGROUND_REMOVE)

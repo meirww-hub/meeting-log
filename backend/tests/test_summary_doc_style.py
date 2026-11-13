@@ -202,3 +202,23 @@ def test_updating_the_summary_keeps_the_stamp(monkeypatch):
     drive_service.update_summary_doc("doc-1", SUMMARY, "2026-10-19T11:32:00+00:00")
 
     assert "הוקלטה ב-19/10/2026 בשעה 14:32" in drive.uploaded
+
+
+def test_one_line_summary_is_split_into_numbered_topics():
+    from app.pipeline.summary_text import normalize_summary_topics
+
+    raw = "1. תקציב: סוכם על 3.5 מיליון ₪ ב-30 ימים. 2. לוח זמנים: עד 15/09. 3. סיום: נקבע."
+    assert normalize_summary_topics(raw).split("\n") == [
+        "1. תקציב: סוכם על 3.5 מיליון ₪ ב-30 ימים.",
+        "2. לוח זמנים: עד 15/09.",
+        "3. סיום: נקבע.",
+    ]
+    assert normalize_summary_topics("1. א: ב\n2. ג: ד") == "1. א: ב\n2. ג: ד"
+
+
+def test_one_line_summary_renders_each_topic_as_its_own_heading():
+    from app.services.drive import _summary_to_rtl_html
+
+    html_out = _summary_to_rtl_html("1. תקציב: גוף א. 2. לוח זמנים: גוף ב.")
+    assert html_out.count("<h2") == 2
+    assert "1. " in html_out and "2. " in html_out

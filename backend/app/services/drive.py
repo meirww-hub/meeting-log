@@ -49,6 +49,7 @@ from googleapiclient.http import MediaIoBaseUpload
 
 from app.config import settings
 from app.models import MeetingResult, TodoItem, TranscriptSegment
+from app.pipeline.summary_text import normalize_summary_topics
 
 _SCOPES = ["https://www.googleapis.com/auth/drive"]
 _TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -472,7 +473,8 @@ def _summary_to_rtl_html(text: str, written_at: str | None = None) -> str:
     def paragraph(content: str) -> None:
         blocks.append(f'<p dir="rtl" style="{_SUMMARY_BODY_STYLE}">{content}</p>')
 
-    for raw_line in text.split("\n"):
+    # סיכומים שנשמרו לפני הניקוי ב-pipeline עלולים להגיע כשורה אחת.
+    for raw_line in normalize_summary_topics(text).split("\n"):
         line = raw_line.strip()
         if not line:
             flush_bullets()

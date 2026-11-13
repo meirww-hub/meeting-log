@@ -271,17 +271,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * העצירה שולחת מיד לעיבוד עם הכותרת שהוקלדה (השרת מייצר כותרת לבד אם
-     * היא ריקה, והיא ניתנת לעריכה מההיסטוריה). הזרימה הישנה - לשמור בזיכרון
-     * ולחכות ללחיצה ידנית על "שלח לעיבוד" - איבדה כל הקלטה שהמשתמש לא שלח
-     * מיד, כולל כשהמערכת הרגה את התהליך אחרי מעבר לשיחה.
+     * העצירה שומרת את ההקלטה (עם הכותרת שהוקלדה) על הדיסק, והיא נשלחת
+     * לעיבוד רק בלחיצה על "שלח לעיבוד". ההמתנה בטוחה כי ההקלטה על הדיסק ולא
+     * בזיכרון - היא שורדת הריגת תהליך ופתיחה מחדש של האפליקציה, ושום סריקה
+     * אוטומטית לא שולחת אותה (ראה RecordingRecovery.sweep). השרת מייצר כותרת
+     * לבד אם היא ריקה, והיא ניתנת לעריכה מההיסטוריה.
      */
     private fun stopRecording() {
         RecordingService.stop(applicationContext, binding.titleInput.text?.toString().orEmpty())
         binding.titleInput.setText("")
         isRecording = false
         applyIdleUi()
-        binding.statusText.text = getString(R.string.status_uploading)
+        binding.statusText.text = getString(R.string.status_saved_waiting_send)
         binding.statusText.setTextColor(ContextCompat.getColor(this, R.color.accent_cyan))
     }
 
@@ -346,7 +347,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        RecordingRecovery.sweep(applicationContext)
+        RecordingRecovery.sweep(applicationContext, userInitiated = true)
         Toast.makeText(
             this,
             getString(R.string.upload_pending_sent, pending),

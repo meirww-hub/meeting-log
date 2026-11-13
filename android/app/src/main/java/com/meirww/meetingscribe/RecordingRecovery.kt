@@ -56,6 +56,8 @@ object RecordingRecovery {
 
     private const val UNIQUE_WORK_NAME = "recording_recovery"
 
+    internal const val KEY_USER_INITIATED = "user_initiated"
+
     /**
      * ה-session שמוקלט ברגע זה - סריקת ההשלמה מדלגת עליו.
      *
@@ -82,17 +84,23 @@ object RecordingRecovery {
     }
 
     /**
-     * מפעיל סריקה והשלמה של כל ההקלטות התקועות. בטוח לקרוא לו בכל רגע.
+     * מפעיל סריקה של ההקלטות שעל הדיסק. בטוח לקרוא לו בכל רגע.
+     *
+     * הקלטה נשלחת לעיבוד רק כש-[userInitiated] - כלומר המשתמש לחץ על "שלח
+     * לעיבוד". סריקה אוטומטית (פתיחת האפליקציה, עצירת הקלטה, הריגת תהליך)
+     * אינה שולחת כלום: ההקלטה נשארת על הדיסק עד הלחיצה, וכך שום דבר לא עובר
+     * לעיבוד בלי שהמשתמש ביקש. ייבוא שיחות מ-cally אינו עובר כאן בכלל.
      *
      * [delayMs] משמש כשצריך לחזור ולבדוק הקלטה שמוגנת כרגע כ"חיה" - ראה
      * [RecordingRecoveryWorker].
      */
-    fun sweep(context: Context, delayMs: Long = 0L) {
+    fun sweep(context: Context, delayMs: Long = 0L, userInitiated: Boolean = false) {
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK_NAME,
             ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<RecordingRecoveryWorker>()
                 .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+                .setInputData(workDataOf(KEY_USER_INITIATED to userInitiated))
                 .build(),
         )
     }
@@ -280,6 +288,12 @@ class RecordingRecoveryWorker(appContext: Context, params: WorkerParameters) :
         // כלומר פגישה שהוקלטה ולעולם לא נשלחה.
         RecordingSessionState.expireIfStale(applicationContext)
 
+        // סריקה שהמשתמש לא ביקש רק משחררת הקלטות שמתו (למעלה). שליחה לעיבוד
+        // רק בלחיצה על "שלח לעיבוד" - ההקלטה ממתינה בשלום על הדיסק.
+        if (!inputData.getBoolean(RecordingRecovery.KEY_USER_INITIATED, false)) {
+            return@withContext Result.success()
+        }
+
         runCatching { RecordingRecovery.prepareAndEnqueue(applicationContext) }
             .onFailure { return@withContext Result.retry() }
 
@@ -292,6 +306,7 @@ class RecordingRecoveryWorker(appContext: Context, params: WorkerParameters) :
             RecordingRecovery.sweep(
                 applicationContext,
                 RecordingSessionState.ALIVE_WINDOW_MS + 10_000L,
+                userInitiated = true,
             )
         }
         Result.success()

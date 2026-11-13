@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.models import TodoItem, TranscriptSegment
 from app.pipeline._retry import call_with_retry
+from app.pipeline.summary_text import normalize_summary_topics
 
 from app.pipeline._model import GEMINI_MAX_OUTPUT_TOKENS as _MAX_OUTPUT_TOKENS
 from app.pipeline._model import GEMINI_MODEL as _MODEL
@@ -201,4 +202,4 @@ def summarize_and_extract_todos(
         response.text
     )
 
-    return parsed.title, parsed.summary, parsed.todos
+    return parsed.title, normalize_summary_topics(parsed.summary), parsed.todos
