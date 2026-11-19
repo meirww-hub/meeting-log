@@ -9,6 +9,7 @@
     <!-- שומר את ה-CPU ער בפגישה ארוכה עם מסך כבוי, כדי שהשחזור האוטומטי של
          המיקרופון אחרי שיחה נכנסת ירוץ בזמן. ראה RecordingService. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- לזיהוי סיום שיחה, כדי לאסוף את ההקלטה החדשה של cally אוטומטית. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <!-- לזיהוי שיחה חדשה ב-cally. -->

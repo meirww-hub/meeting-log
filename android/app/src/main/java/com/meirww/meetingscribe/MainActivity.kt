@@ -244,9 +244,32 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        requestBatteryExemption()
+
         // סריקה גם בפתיחת האפליקציה - קולטת שיחות שהוקלטו בזמן ש-Shizuku
         // לא הייתה פעילה (למשל מיד אחרי אתחול המכשיר).
         CallImportWorker.schedule(applicationContext, delaySeconds = 5)
+    }
+
+    /**
+     * בלי פטור מאופטימיזציית סוללה אנדרואיד מעביר אפליקציה שלא נפתחת הרבה
+     * לדלי "RARE", ושם מכסת המשימות ברקע כמעט אפסית: סריקת ייבוא השיחות
+     * וההעלאות נדחות בשעות, ושיחות מגיעות לעיבוד באיחור גדול או בכלל לא.
+     * מבקשים פעם אחת (המשתמש יכול לסרב) - הדיאלוג של המערכת, לא הגדרות.
+     */
+    @android.annotation.SuppressLint("BatteryLife")
+    private fun requestBatteryExemption() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        if (powerManager.isIgnoringBatteryOptimizations(packageName)) return
+        val prefs = getSharedPreferences("battery_prompt", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("asked", false)) return
+        prefs.edit().putBoolean("asked", true).apply()
+        runCatching {
+            startActivity(
+                Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(android.net.Uri.parse("package:$packageName"))
+            )
+        }
     }
 
     private fun updateThemeToggleIcon() {
