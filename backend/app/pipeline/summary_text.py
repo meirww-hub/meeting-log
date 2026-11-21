@@ -13,7 +13,8 @@ def normalize_summary_topics(text: str) -> str:
     הפיצול נעשה רק לפני מספר שהוא הבא בתור (2 אחרי 1, 3 אחרי 2...) ואחריו
     רווח, כך שמספרים רגילים בתוך משפט ("ב-30 ימים", "3.5 מיליון") לא נחתכים.
     """
-    text = text.replace("\n", "\n").replace("\r\n", "\n")
+    # "\\n" כאן הוא הרצף הגולמי של שני תווים (לוכסן + n), לא מעבר שורה.
+    text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n")
 
     expected = 2
     search_from = 0

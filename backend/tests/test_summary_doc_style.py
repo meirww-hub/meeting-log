@@ -222,3 +222,14 @@ def test_one_line_summary_renders_each_topic_as_its_own_heading():
     html_out = _summary_to_rtl_html("1. תקציב: גוף א. 2. לוח זמנים: גוף ב.")
     assert html_out.count("<h2") == 2
     assert "1. " in html_out and "2. " in html_out
+
+
+def test_literal_backslash_n_becomes_real_topic_lines():
+    from app.pipeline.summary_text import normalize_summary_topics
+
+    raw = "1. תקציב: גוף א.\n2. לוח זמנים: גוף ב.\n3. סיכום: גוף ג."
+    assert normalize_summary_topics(raw).split("\n") == [
+        "1. תקציב: גוף א.",
+        "2. לוח זמנים: גוף ב.",
+        "3. סיכום: גוף ג.",
+    ]
