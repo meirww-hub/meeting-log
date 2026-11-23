@@ -19,6 +19,9 @@ import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.meirww.meetingscribe.watch.FailReason
+import com.meirww.meetingscribe.watch.WatchState
+import com.meirww.meetingscribe.watch.WatchStatus
 import java.io.File
 
 /**
@@ -44,11 +47,37 @@ class RecordingService : Service() {
          * ה-UI מציג את זה במקום להעמיד פנים שהכול תקין. ההקלטה עצמה ממשיכה
          * להיות פעילה בשני המצבים.
          */
+        /**
+         * משודר כשההקלטה נעצרה - גם כשהעצירה לא באה מהמסך הפתוח (השעון, כפתור
+         * ההתראה). בלעדיו מסך האפליקציה הפתוח המשיך להציג "מקליט".
+         */
+        const val ACTION_RECORDING_STOPPED = "com.meirww.meetingscribe.action.RECORDING_STOPPED"
+
         const val ACTION_CAPTURE_STATE = "com.meirww.meetingscribe.action.CAPTURE_STATE"
         const val EXTRA_CAPTURING = "capturing"
 
         var isRecording = false
             private set
+
+        /** האם המיקרופון באמת קולט כרגע (false בזמן שיחה שחוטפת אותו). */
+        @Volatile
+        private var capturing = false
+
+        /**
+         * המצב האמיתי של ההקלטה כפי שהשעון צריך להציג אותו. הטלפון הוא מקור
+         * האמת, ולכן גם הבקשה "מה המצב" מהשעון נענית מכאן.
+         */
+        fun currentWatchStatus(context: Context): WatchStatus {
+            val pending = RecordingRecovery.pendingCount(context)
+            if (!isRecording) return WatchStatus(WatchState.IDLE, pendingCount = pending)
+            val now = System.currentTimeMillis()
+            val startedAt = RecordingSessionState.startedAtMillis(context) ?: now
+            return WatchStatus(
+                state = if (capturing) WatchState.RECORDING else WatchState.WAITING_MIC,
+                elapsedMs = (now - startedAt).coerceAtLeast(0L),
+                pendingCount = pending,
+            )
+        }
 
         fun start(context: Context) {
             if (isRecording) return
@@ -156,6 +185,9 @@ class RecordingService : Service() {
             // אין אפשרות לבקש הרשאה מתוך שירות ברקע - זה יכול לקרות רק אם
             // המשתמש עוד לא פתח את האפליקציה פעם אחת ואישר מיקרופון.
             RecordingSessionState.clear(this)
+            WatchSync.publish(
+                this, WatchStatus(WatchState.FAILED, reason = FailReason.NO_MIC_PERMISSION)
+            )
             stopSelf()
             return
         }
@@ -169,6 +201,9 @@ class RecordingService : Service() {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             sendBroadcast(Intent(ACTION_RECORDING_FAILED).setPackage(packageName))
+            WatchSync.publish(
+                this, WatchStatus(WatchState.FAILED, reason = FailReason.START_FAILED)
+            )
             return
         }
 
@@ -180,7 +215,9 @@ class RecordingService : Service() {
         isRecording = true
         acquireWakeLock()
         registerPhoneStateReceiver()
-        if (!recordingManager.isCapturing) onCaptureStateChanged(capturing = false)
+        capturing = recordingManager.isCapturing
+        if (!capturing) onCaptureStateChanged(capturing = false)
+        else WatchSync.publish(applicationContext, currentWatchStatus(applicationContext))
     }
 
     private fun handleStop(title: String) {
@@ -195,6 +232,7 @@ class RecordingService : Service() {
 
         val sessionDir = recordingManager.stopRecording()
         isRecording = false
+        capturing = false
         unregisterPhoneStateReceiver()
         releaseWakeLock()
 
@@ -204,6 +242,11 @@ class RecordingService : Service() {
         // ההקלטה נשארת על הדיסק וממתינה ללחיצה על "שלח לעיבוד" (האיחוד
         // וההעלאה רצים ב-WorkManager רק אז). הסריקה כאן רק משחררת סימון חי.
         RecordingRecovery.sweep(applicationContext)
+
+        sendBroadcast(Intent(ACTION_RECORDING_STOPPED).setPackage(packageName))
+
+        // השעון מציג "נשמר" וכמה הקלטות ממתינות ללחיצה על "שלח לעיבוד".
+        WatchSync.publish(applicationContext, currentWatchStatus(applicationContext))
 
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -216,9 +259,11 @@ class RecordingService : Service() {
             // תשלים אותו, במקום שההקלטה תיעלם.
             runCatching { recordingManager.stopRecording() }
             isRecording = false
+            capturing = false
             unregisterPhoneStateReceiver()
             releaseWakeLock()
             RecordingRecovery.sweep(applicationContext)
+            WatchSync.publish(applicationContext, currentWatchStatus(applicationContext))
         }
         runCatching { recordingManager.release() }
         super.onDestroy()
@@ -226,6 +271,8 @@ class RecordingService : Service() {
 
     private fun onCaptureStateChanged(capturing: Boolean) {
         if (!isRecording) return
+        RecordingService.capturing = capturing
+        WatchSync.publish(applicationContext, currentWatchStatus(applicationContext))
         getSystemService(NotificationManager::class.java)
             ?.notify(NOTIFICATION_ID, buildNotification(capturing))
         sendBroadcast(

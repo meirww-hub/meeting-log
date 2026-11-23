@@ -10,4 +10,13 @@
         <item name="android:navigationBarColor">@color/bg_bottom</item>
         <item name="android:textColorHint">@color/text_hint</item>
     </style>
+
+    <!-- מסך ההתחלה מהשעון: לא רואים אותו, הוא רק מעלה את האפליקציה לחזית. -->
+    <style name="Theme.MeetingScribe.Transparent" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

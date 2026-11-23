@@ -15,6 +15,11 @@
     <string name="upload_pending_sent">שולח %1$d הקלטות שממתינות</string>
     <string name="status_done">נשלח לעיבוד. הסיכום יופיע בדרייב בקרוב.</string>
 
+    <string name="overlay_prompt_title">הפעלת הקלטה מהשעון</string>
+    <string name="overlay_prompt_message">כדי שלחיצה בשעון תתחיל הקלטה גם כשהטלפון נעול או בכיס, אנדרואיד דורש שהאפליקציה תקבל את ההרשאה "הצגה מעל אפליקציות אחרות".\n\nהאפליקציה משתמשת בה רק כדי להעלות מסך שקוף לשנייה אחת בהתחלת הקלטה שביקשת מהשעון שלך. כדי לאשר: בדף שייפתח הפעל את המתג של Meeting Log.</string>
+    <string name="overlay_prompt_ok">לדף ההרשאה</string>
+    <string name="overlay_prompt_later">לא עכשיו</string>
+
     <string name="link_transcript">תמלול</string>
     <string name="link_summary">סיכום</string>
     <string name="link_todo">TO DO</string>

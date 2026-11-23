@@ -100,6 +100,19 @@ class MainActivity : AppCompatActivity() {
      * המיקרופון נחטף (שיחה נכנסת) או חזר. ההקלטה ממשיכה להיות פעילה בשני
      * המצבים - רק הטקסט משתנה, כדי שהמשתמש ידע מה קורה ולא יעצור בטעות.
      */
+    /** עצירה שהגיעה מבחוץ (שעון, התראה): המסך חוזר למצב "נשמר" במקום להמשיך להציג "מקליט". */
+    private val recordingStoppedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (!isRecording) return
+            isRecording = false
+            applyIdleUi()
+            binding.statusText.text = getString(R.string.status_saved_waiting_send)
+            binding.statusText.setTextColor(
+                ContextCompat.getColor(this@MainActivity, R.color.accent_cyan)
+            )
+        }
+    }
+
     private val captureStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (!isRecording) return
@@ -167,6 +180,7 @@ class MainActivity : AppCompatActivity() {
         )
         registerLocal(recordingFailedReceiver, RecordingService.ACTION_RECORDING_FAILED)
         registerLocal(captureStateReceiver, RecordingService.ACTION_CAPTURE_STATE)
+        registerLocal(recordingStoppedReceiver, RecordingService.ACTION_RECORDING_STOPPED)
     }
 
     private fun registerLocal(receiver: BroadcastReceiver, action: String) {
@@ -190,6 +204,7 @@ class MainActivity : AppCompatActivity() {
         boundService = null
         unregisterReceiver(recordingFailedReceiver)
         unregisterReceiver(captureStateReceiver)
+        unregisterReceiver(recordingStoppedReceiver)
     }
 
     /**
@@ -245,6 +260,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestBatteryExemption()
+        requestOverlayPermissionOnce()
 
         // סריקה גם בפתיחת האפליקציה - קולטת שיחות שהוקלטו בזמן ש-Shizuku
         // לא הייתה פעילה (למשל מיד אחרי אתחול המכשיר).
@@ -270,6 +286,32 @@ class MainActivity : AppCompatActivity() {
                     .setData(android.net.Uri.parse("package:$packageName"))
             )
         }
+    }
+
+    /**
+     * "הצגה מעל אפליקציות אחרות" - התנאי היחיד שמאפשר לשעון להתחיל הקלטה
+     * כשהטלפון נעול או בכיס (ראה WatchStartPolicy). מבקשים פעם אחת, עם הסבר
+     * למה, כי זו הרשאה שאנדרואיד מתייחס אליה בחשדנות. אם המשתמש מסרב, השעון
+     * יציג בעצמו מה חסר כשינסה להתחיל.
+     */
+    private fun requestOverlayPermissionOnce() {
+        if (android.provider.Settings.canDrawOverlays(this)) return
+        val prefs = getSharedPreferences("overlay_prompt", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("asked", false)) return
+        prefs.edit().putBoolean("asked", true).apply()
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.overlay_prompt_title)
+            .setMessage(R.string.overlay_prompt_message)
+            .setPositiveButton(R.string.overlay_prompt_ok) { _, _ ->
+                runCatching {
+                    startActivity(
+                        Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                            .setData(android.net.Uri.parse("package:$packageName"))
+                    )
+                }
+            }
+            .setNegativeButton(R.string.overlay_prompt_later, null)
+            .show()
     }
 
     private fun updateThemeToggleIcon() {

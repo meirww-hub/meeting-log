@@ -34,6 +34,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    // הפרוטוקול בין הטלפון לשעון משותף לשני המודולים (ראה :wear), כך שהם
+    // לא יכולים להיסחף זה מזה.
+    sourceSets["main"].kotlin.srcDir("../shared")
 }
 
 dependencies {
@@ -49,6 +53,8 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.android.gms:play-services-auth:21.2.0")
+    // תקשורת עם השעון המצומד (Data Layer) - ראה WatchMessageListenerService.
+    implementation("com.google.android.gms:play-services-wearable:18.2.0")
     // Shizuku - הרשאות shell לקריאת הקלטות cally מתיקייה חסומה. ראה ShizukuAccess.
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
