@@ -138,4 +138,4 @@ def test_cleanup_endpoint_returns_both_deleted_and_recovered(cleanup_client):
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {"deleted": ["deleted-1"], "recovered": ["recovered-1"]}
+    assert body == {"deleted": ["deleted-1"], "recovered": ["recovered-1"], "retrying": []}

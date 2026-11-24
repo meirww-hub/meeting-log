@@ -1,3 +1,4 @@
+import datetime
 import shutil
 import tempfile
 import time
@@ -5,11 +6,14 @@ import uuid
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response, StreamingResponse
+from google.cloud import firestore
 
 from app.config import settings
 from app.models import ChatRequest, RecordingUpdateRequest
 from app.pipeline import edit as recording_edit
+from app.pipeline import stash
 from app.pipeline.attachments import mime_type_for, process_attachment, retry_attachment
 from app.pipeline.chat import answer_question
 from app.pipeline.pipeline import process_call_recording, process_recording
@@ -27,9 +31,7 @@ _PIPELINE_RETRY_DELAY_SECONDS = 20
 
 # השלבים שאחרי כישלון בהם מותר להתחיל מחדש מאפס. משלב הכתיבה ל-Drive
 # ואילך כבר נוצרו תיקייה ומסמכים, וריצה שנייה הייתה מייצרת עותק שני שלהם.
-_RESUMABLE_STATUSES = frozenset(
-    {"queued", "transcribing", "summarizing"}
-)
+_RESUMABLE_STATUSES = stash.SAFE_RETRY_STATUSES
 
 
 def _run_recording_pipeline(pipeline_fn, recording_id: str, user_id: str, *args) -> None:
@@ -43,6 +45,7 @@ def _run_recording_pipeline(pipeline_fn, recording_id: str, user_id: str, *args)
     for attempt in range(_PIPELINE_ATTEMPTS):
         try:
             pipeline_fn(recording_id, user_id, *args)
+            _release_stash(recording_id)
             return
         except Exception as e:
             record = firestore_store.get_recording(recording_id) or {}
@@ -54,8 +57,86 @@ def _run_recording_pipeline(pipeline_fn, recording_id: str, user_id: str, *args)
                 firestore_store.set_recording_status(
                     recording_id, user_id, "error", error=str(e)
                 )
+                # האודיו שמור מראש (ראה pipeline/stash.py), ולכן כישלון
+                # בשלב שלא כתב כלום ל-Drive מתוזמן לניסיון חוזר בעוד שעה.
+                if reached in _RESUMABLE_STATUSES:
+                    _schedule_retry(recording_id)
                 return
             time.sleep(_PIPELINE_RETRY_DELAY_SECONDS)
+
+
+def _release_stash(recording_id: str) -> None:
+    """העיבוד הצליח - מוחק את העותק הזמני. כישלון כאן לא מבטל הצלחה."""
+    try:
+        record = firestore_store.get_recording(recording_id) or {}
+        stash.release(recording_id, record)
+    except Exception:
+        pass
+
+
+def _schedule_retry(recording_id: str) -> None:
+    try:
+        record = firestore_store.get_recording(recording_id) or {}
+        stash.schedule_retry(recording_id, record)
+    except Exception:
+        pass
+
+
+def _retry_recording(recording_id: str, automatic: bool) -> None:
+    """מריץ שוב הקלטה שנכשלה, מהאודיו ששמור ב-Drive."""
+    record = firestore_store.get_recording(recording_id) or {}
+    if record.get("status") != "error" or not record.get("stash"):
+        return  # כבר רצה (טריגר אחר הקדים), הצליחה או נמחקה
+
+    user_id = record.get("user_id", "")
+    spec = record["stash"]
+    retries = int(record.get("auto_retries") or 0) + (1 if automatic else 0)
+    firestore_store.update_recording_fields(
+        recording_id,
+        status="queued",
+        error=firestore.DELETE_FIELD,
+        retry_at=firestore.DELETE_FIELD,
+        auto_retries=retries,
+    )
+
+    tmp_dir = Path(tempfile.gettempdir()) / "meetingscribe"
+    tmp_dir.mkdir(exist_ok=True)
+    paths: list[Path] = []
+    try:
+        for index, entry in enumerate(spec["files"]):
+            path = tmp_dir / f"{recording_id}_retry{index}.m4a"
+            path.write_bytes(drive.download_file(entry["id"]))
+            paths.append(path)
+
+        title = spec.get("title", "")
+        duration = float(spec.get("duration") or 0.0)
+        if spec.get("kind") == "call" and len(paths) >= 2:
+            _run_recording_pipeline(
+                process_call_recording, recording_id, user_id,
+                str(paths[0]), str(paths[1]), title, duration,
+            )
+        else:
+            _run_recording_pipeline(
+                process_recording, recording_id, user_id,
+                str(paths[0]), title, duration,
+            )
+    except Exception as e:
+        firestore_store.set_recording_status(recording_id, user_id, "error", error=str(e))
+        _schedule_retry(recording_id)
+    finally:
+        for path in paths:
+            path.unlink(missing_ok=True)
+
+
+def _queue_due_retries(
+    background_tasks: BackgroundTasks, user_id: str | None = None
+) -> list[str]:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    ids = []
+    for record in firestore_store.list_retry_due(now, user_id):
+        background_tasks.add_task(_retry_recording, record["recording_id"], True)
+        ids.append(record["recording_id"])
+    return ids
 
 
 def recording_id_for_upload(user_id: str, client_upload_id: str) -> str:
@@ -150,13 +231,40 @@ async def upload_recording(
     with audio_path.open("wb") as out_file:
         shutil.copyfileobj(file.file, out_file)
 
-    extra = {"recorded_at": recorded_at} if recorded_at else {}
-    firestore_store.set_recording_status(recording_id, user_id, "queued", **extra)
-
+    downlink_path = None
     if file_downlink is not None:
         downlink_path = tmp_dir / f"{recording_id}_downlink_{file_downlink.filename}"
         with downlink_path.open("wb") as out_file:
             shutil.copyfileobj(file_downlink.file, out_file)
+
+    # האודיו נשמר ב-Drive *לפני* שהשרת עונה לטלפון, כי ברגע שהוא עונה 200
+    # הטלפון מוחק את העותק שלו. נכשלה השמירה - 503, והטלפון שומר את הקובץ
+    # וינסה שוב. ראה pipeline/stash.py.
+    files = [(str(audio_path), "")]
+    if downlink_path is not None:
+        files.append((str(downlink_path), "הצד השני"))
+    try:
+        stash_info = await run_in_threadpool(
+            stash.save,
+            recording_id,
+            files,
+            "call" if downlink_path is not None else "single",
+            title,
+            duration_seconds,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"could not store audio: {e}")
+
+    previous = firestore_store.get_recording(recording_id) if client_upload_id else None
+    extra = {"recorded_at": recorded_at} if recorded_at else {}
+    firestore_store.set_recording_status(
+        recording_id, user_id, "queued", stash=stash_info,
+        retry_at=firestore.DELETE_FIELD, **extra,
+    )
+    if previous and previous.get("stash"):
+        stash.release_files(previous)  # העלאה חוזרת מחליפה את העותק הישן
+
+    if downlink_path is not None:
         background_tasks.add_task(
             _run_recording_pipeline,
             process_call_recording,
@@ -216,8 +324,29 @@ def publish_usage_metric() -> dict:
     return compute_usage.publish_free_tier_usage_metric()
 
 
+@app.post("/admin/retry-failed", dependencies=[Depends(require_scheduler_key)])
+def retry_failed_recordings(background_tasks: BackgroundTasks) -> dict:
+    """נקרא ע"י Cloud Scheduler: מריץ שוב הקלטות שנכשלו ושזמן הניסיון החוזר
+    שלהן (שעה אחרי הכישלון) הגיע. ראה pipeline/stash.py."""
+    return {"retrying": _queue_due_retries(background_tasks)}
+
+
+@app.post("/recordings/{recording_id}/retry", dependencies=[Depends(require_api_key)])
+def retry_recording(recording_id: str, background_tasks: BackgroundTasks) -> dict:
+    """ניסיון חוזר מיידי מהאודיו ששמור בשרת (כפתור "נסה שוב" בהיסטוריה)."""
+    record = firestore_store.get_recording(recording_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="recording not found")
+    if record.get("status") != "error":
+        raise HTTPException(status_code=409, detail="recording is not in error state")
+    if not record.get("stash"):
+        raise HTTPException(status_code=409, detail="no stored audio for this recording")
+    background_tasks.add_task(_retry_recording, recording_id, False)
+    return {"recording_id": recording_id, "status": "queued"}
+
+
 @app.post("/recordings/cleanup", dependencies=[Depends(require_api_key)])
-def cleanup_recordings(user_id: str) -> dict:
+def cleanup_recordings(user_id: str, background_tasks: BackgroundTasks) -> dict:
     """שתי תחזוקות שוטפות, שתיהן נקראות מהאפליקציה בכל טעינה של מסך
     ההיסטוריה (ראה HistoryActivity.kt) - אין מנגנון תזמון בצד השרת:
 
@@ -229,7 +358,9 @@ def cleanup_recordings(user_id: str) -> dict:
     """
     deleted_ids = recording_edit.cleanup_expired_recordings(user_id)
     recovered_ids = recording_edit.recover_stale_recordings(user_id)
-    return {"deleted": deleted_ids, "recovered": recovered_ids}
+    # גיבוי לתזמון: אם האפליקציה נפתחת אחרי שזמן הניסיון החוזר הגיע, מריצים כבר.
+    retrying = _queue_due_retries(background_tasks, user_id)
+    return {"deleted": deleted_ids, "recovered": recovered_ids, "retrying": retrying}
 
 
 @app.delete("/recordings/{recording_id}", dependencies=[Depends(require_api_key)])

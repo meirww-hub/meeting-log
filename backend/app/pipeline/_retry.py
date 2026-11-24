@@ -11,8 +11,12 @@ import time
 
 from google.genai import errors
 
-_MAX_ATTEMPTS = 4
-_BASE_DELAY_SECONDS = 5
+# עומס (503) יכול להימשך דקות: ב-2026-11-24 שתי הקלטות נפלו כי 4 ניסיונות
+# בהמתנה של 5-20 שניות (כחצי דקה בסך הכל) נגמרו לפני שהעומס חלף. 6 ניסיונות
+# עם 10, 20, 40, 80, 160 שניות מכסים כ-5 דקות.
+_MAX_ATTEMPTS = 6
+_RATE_LIMIT_MAX_ATTEMPTS = 4
+_BASE_DELAY_SECONDS = 10
 # חריגת מכסה נמדדת בחלון של דקה, ולכן אין טעם לנסות שוב אחרי שניות בודדות.
 _RATE_LIMIT_BASE_DELAY_SECONDS = 30
 
@@ -32,6 +36,9 @@ def call_with_retry(fn, *args, **kwargs):
                 # רק יחזור על אותה תקלה.
                 raise
             last_error = e
+            limit = _RATE_LIMIT_MAX_ATTEMPTS if _is_rate_limit(e) else _MAX_ATTEMPTS
+            if attempt >= limit - 1:
+                break
             if attempt < _MAX_ATTEMPTS - 1:
                 base = (
                     _RATE_LIMIT_BASE_DELAY_SECONDS

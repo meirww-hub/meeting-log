@@ -196,6 +196,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         syncUiToServiceState()
+        refreshPendingLabel()
     }
 
     override fun onStop() {
@@ -400,25 +401,79 @@ class MainActivity : AppCompatActivity() {
         binding.recordButtonRing.scaleY = 1f
     }
 
+    /** מספר הממתינות על הכפתור, כדי שיהיה ברור גם בלי ללחוץ. */
+    private fun refreshPendingLabel() {
+        val pending = RecordingRecovery.pendingCount(applicationContext)
+        binding.uploadLabel.text =
+            if (pending > 0) getString(R.string.upload_with_count, pending)
+            else getString(R.string.upload_recording)
+    }
+
     /**
-     * העלאה אוטומטית כבר קורית בכל עצירה, ולכן הכפתור הזה הוא רשת הביטחון:
-     * הוא דוחף מיד כל הקלטה שנתקעה על המכשיר (העלאה שנכשלה ברשת, תהליך
-     * שנהרג באמצע) במקום לחכות לסריקה הבאה.
+     * רשימת ההקלטות שממתינות, עם בחירה מה לשלוח ומה למחוק. הכול מסומן כברירת
+     * מחדל, כך שלחיצה אחת על "שלח נבחרות" שולחת הכול כמו קודם.
      */
     private fun uploadLastRecording() {
-        val pending = RecordingRecovery.pendingCount(applicationContext)
-        if (pending == 0) {
+        val sessions = RecordingRecovery.pendingSessions(applicationContext)
+        if (sessions.isEmpty()) {
             Toast.makeText(this, R.string.upload_nothing_pending, Toast.LENGTH_SHORT).show()
             return
         }
 
-        RecordingRecovery.sweep(applicationContext, userInitiated = true)
-        Toast.makeText(
-            this,
-            getString(R.string.upload_pending_sent, pending),
-            Toast.LENGTH_LONG
-        ).show()
-        binding.statusText.text = getString(R.string.status_uploading)
-        binding.statusText.setTextColor(ContextCompat.getColor(this, R.color.accent_cyan))
+        val fmt = java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault())
+        val labels = sessions.map {
+            val minutes = (it.approxSeconds / 60).coerceAtLeast(0)
+            val mb = it.bytes / (1024.0 * 1024.0)
+            fmt.format(java.util.Date(it.recordedAtMillis)) + "  \u2022  ~" + minutes +
+                " \u05d3\u05e7\u05f3  \u2022  " + String.format(java.util.Locale.US, "%.1fMB", mb)
+        }.toTypedArray()
+        val checked = BooleanArray(sessions.size) { true }
+
+        fun selected() = sessions.filterIndexed { i, _ -> checked[i] }.map { it.name }.toSet()
+
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.pending_title)
+            .setMultiChoiceItems(labels, checked) { _, which, isChecked -> checked[which] = isChecked }
+            .setPositiveButton(R.string.pending_send, null)
+            .setNegativeButton(R.string.pending_delete, null)
+            .setNeutralButton(R.string.pending_close, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val names = selected()
+                if (names.isEmpty()) {
+                    Toast.makeText(this, R.string.pending_none_selected, Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                RecordingRecovery.sweep(applicationContext, userInitiated = true, onlySessions = names)
+                Toast.makeText(
+                    this, getString(R.string.upload_pending_sent, names.size), Toast.LENGTH_LONG
+                ).show()
+                binding.statusText.text = getString(R.string.status_uploading)
+                binding.statusText.setTextColor(ContextCompat.getColor(this, R.color.accent_cyan))
+                dialog.dismiss()
+                mainHandler.postDelayed({ refreshPendingLabel() }, 3_000)
+            }
+            dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                val names = selected()
+                if (names.isEmpty()) {
+                    Toast.makeText(this, R.string.pending_none_selected, Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                    .setMessage(getString(R.string.pending_delete_confirm, names.size))
+                    .setPositiveButton(R.string.pending_delete) { _, _ ->
+                        val n = RecordingRecovery.deleteSessions(applicationContext, names)
+                        Toast.makeText(
+                            this, getString(R.string.pending_deleted, n), Toast.LENGTH_SHORT
+                        ).show()
+                        dialog.dismiss()
+                        refreshPendingLabel()
+                    }
+                    .setNegativeButton(R.string.pending_close, null)
+                    .show()
+            }
+        }
+        dialog.show()
     }
 }

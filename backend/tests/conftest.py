@@ -35,3 +35,22 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "live" in item.keywords:
             item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_real_drive(monkeypatch):
+    """שמירת האודיו המקדימה (pipeline/stash.py) פונה ל-Drive. בבדיקות היא
+    מוחלפת בכפיל, אחרת כל העלאה בבדיקה הייתה משאירה קבצים אמיתיים בדרייב."""
+    from app.services import drive
+
+    monkeypatch.setattr(
+        drive, "stash_audio", lambda recording_id, files: [f"fake-{i}" for i, _ in enumerate(files)]
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_retry_lookup(monkeypatch):
+    """GET/POST שמריצים ניסיונות חוזרים שואלים את Firestore מי מועמד לכך."""
+    from app.services import firestore_store
+
+    monkeypatch.setattr(firestore_store, "list_retry_due", lambda now, user_id=None: [])

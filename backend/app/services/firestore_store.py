@@ -173,6 +173,25 @@ def list_recordings(user_id: str) -> list[dict]:
     return recordings
 
 
+def list_retry_due(now: datetime.datetime, user_id: str | None = None) -> list[dict]:
+    """הקלטות שנכשלו, עדיין שומרות את האודיו שלהן (stash), ושזמן הניסיון החוזר
+    שלהן הגיע. ראה pipeline/stash.py."""
+    query = _client().collection(_RECORDINGS_COLLECTION).where("status", "==", "error")
+    if user_id:
+        query = query.where("user_id", "==", user_id)
+    due = []
+    read_count = 0
+    for doc in query.stream():
+        read_count += 1
+        data = doc.to_dict()
+        retry_at = data.get("retry_at")
+        if data.get("stash") and retry_at and retry_at <= now:
+            data["recording_id"] = doc.id
+            due.append(data)
+    usage_tracker.record("reads", count=read_count)
+    return due
+
+
 def list_expired_short_recordings(
     user_id: str, max_duration_seconds: float, min_age: datetime.timedelta
 ) -> list[dict]:

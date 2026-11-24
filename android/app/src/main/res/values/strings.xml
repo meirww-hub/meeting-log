@@ -11,6 +11,14 @@
     <string name="status_recording_waiting_mic">ממתין למיקרופון (שיחה פעילה) - ההקלטה תתחדש לבד</string>
     <string name="status_uploading">מעלה ומעבד...</string>
     <string name="status_saved_waiting_send">ההקלטה נשמרה. לחץ על "שלח לעיבוד" כדי לעבד אותה.</string>
+    <string name="upload_with_count">שלח לעיבוד (%1$d)</string>
+    <string name="pending_title">הקלטות שממתינות</string>
+    <string name="pending_send">שלח נבחרות</string>
+    <string name="pending_delete">מחק נבחרות</string>
+    <string name="pending_close">סגור</string>
+    <string name="pending_none_selected">לא נבחרה אף הקלטה</string>
+    <string name="pending_delete_confirm">למחוק %1$d הקלטות לצמיתות? אי אפשר לשחזר.</string>
+    <string name="pending_deleted">נמחקו %1$d הקלטות</string>
     <string name="upload_nothing_pending">אין הקלטות שממתינות לשליחה</string>
     <string name="upload_pending_sent">שולח %1$d הקלטות שממתינות</string>
     <string name="status_done">נשלח לעיבוד. הסיכום יופיע בדרייב בקרוב.</string>

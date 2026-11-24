@@ -58,6 +58,20 @@ object RecordingRecovery {
 
     internal const val KEY_USER_INITIATED = "user_initiated"
 
+    /** אם קיים: נשלחות רק התיקיות ששמותן ברשימה (בחירה ידנית של המשתמש). */
+    internal const val KEY_ONLY_SESSIONS = "only_sessions"
+
+    /** הקלטה ממתינה כפי שמוצגת למשתמש. approxSeconds הערכה לפי גודל (48kbps). */
+    data class PendingSession(
+        val name: String,
+        val recordedAtMillis: Long,
+        val bytes: Long,
+    ) {
+        val approxSeconds: Long get() = bytes / BYTES_PER_SECOND
+    }
+
+    private const val BYTES_PER_SECOND = 6_000L
+
     /**
      * ה-session שמוקלט ברגע זה - סריקת ההשלמה מדלגת עליו.
      *
@@ -94,15 +108,46 @@ object RecordingRecovery {
      * [delayMs] משמש כשצריך לחזור ולבדוק הקלטה שמוגנת כרגע כ"חיה" - ראה
      * [RecordingRecoveryWorker].
      */
-    fun sweep(context: Context, delayMs: Long = 0L, userInitiated: Boolean = false) {
+    fun sweep(
+        context: Context,
+        delayMs: Long = 0L,
+        userInitiated: Boolean = false,
+        onlySessions: Set<String>? = null,
+    ) {
+        val data = androidx.work.Data.Builder()
+            .putBoolean(KEY_USER_INITIATED, userInitiated)
+            .apply {
+                if (onlySessions != null) putStringArray(KEY_ONLY_SESSIONS, onlySessions.toTypedArray())
+            }
+            .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             UNIQUE_WORK_NAME,
             ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<RecordingRecoveryWorker>()
                 .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
-                .setInputData(workDataOf(KEY_USER_INITIATED to userInitiated))
+                .setInputData(data)
                 .build(),
         )
+    }
+
+    /** ההקלטות הממתינות, הישנה ראשונה, לתצוגה ולבחירה. */
+    fun pendingSessions(context: Context): List<PendingSession> =
+        strandedSessions(context).map { dir ->
+            PendingSession(
+                name = dir.name,
+                recordedAtMillis = dir.name.removePrefix(SESSION_PREFIX).toLongOrNull()
+                    ?: dir.lastModified(),
+                bytes = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() },
+            )
+        }
+
+    /** מוחק הקלטות ממתינות שהמשתמש בחר. אף פעם לא את זו שמוקלטת עכשיו. */
+    fun deleteSessions(context: Context, names: Set<String>): Int {
+        var deleted = 0
+        for (dir in strandedSessions(context)) {
+            if (dir.name in names && dir.deleteRecursively()) deleted += 1
+        }
+        return deleted
     }
 
     /** כמה הקלטות ממתינות לשליחה כרגע (לא כולל זו שמוקלטת ברגע זה). */
@@ -130,10 +175,11 @@ object RecordingRecovery {
      * מכין את ההקלטות התקועות לשליחה: מאחד קטעים (אם עוד לא אוחדו) ומכניס
      * כל קובץ מאוחד לתור ההעלאה. מחזיר את מספר ההעלאות שנכנסו לתור.
      */
-    internal fun prepareAndEnqueue(context: Context): Int {
+    internal fun prepareAndEnqueue(context: Context, only: Set<String>? = null): Int {
         var enqueued = 0
 
         for (sessionDir in strandedSessions(context)) {
+            if (only != null && sessionDir.name !in only) continue
             var mergedFiles = mergedFilesIn(sessionDir)
 
             if (mergedFiles.isEmpty()) {
@@ -294,7 +340,8 @@ class RecordingRecoveryWorker(appContext: Context, params: WorkerParameters) :
             return@withContext Result.success()
         }
 
-        runCatching { RecordingRecovery.prepareAndEnqueue(applicationContext) }
+        val only = inputData.getStringArray(RecordingRecovery.KEY_ONLY_SESSIONS)?.toSet()
+        runCatching { RecordingRecovery.prepareAndEnqueue(applicationContext, only) }
             .onFailure { return@withContext Result.retry() }
 
         // יש הקלטה מוגנת אבל היא לא מוקלטת בתהליך הזה - כלומר השירות נהרג
@@ -307,6 +354,7 @@ class RecordingRecoveryWorker(appContext: Context, params: WorkerParameters) :
                 applicationContext,
                 RecordingSessionState.ALIVE_WINDOW_MS + 10_000L,
                 userInitiated = true,
+                onlySessions = only,
             )
         }
         Result.success()

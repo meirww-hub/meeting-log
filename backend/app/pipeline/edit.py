@@ -13,6 +13,7 @@ _recording_file_ids מרכז אותה. הקלטות ישנות, שעדיין י�
 import datetime
 
 from app.models import RecordingUpdateRequest
+from app.pipeline import stash
 from app.services import drive, firestore_store
 
 # הקלטה קצרה מ-5 דקות שלא נערכה נמחקת אוטומטית 48 שעות אחרי יצירתה
@@ -146,6 +147,7 @@ def delete_recording(recording_id: str, recording: dict) -> None:
         drive.trash_folder(folder_id)
     else:
         drive.trash_files(_recording_file_ids(recording))
+    stash.release_files(recording)
     firestore_store.delete_recording(recording_id)
 
 
@@ -185,5 +187,7 @@ def recover_stale_recordings(user_id: str) -> list[str]:
             recording_id, user_id, "error",
             error=f"העיבוד נעצר באמצע ({stuck_status}) - כנראה עומס זמני בשרת. נסו שוב.",
         )
+        if stuck_status in stash.SAFE_RETRY_STATUSES:
+            stash.schedule_retry(recording_id, candidate)
         recovered_ids.append(recording_id)
     return recovered_ids

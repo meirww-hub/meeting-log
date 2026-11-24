@@ -336,13 +336,34 @@ class HistoryActivity : AppCompatActivity() {
      * שומרת את המקור - ולכן די לבטל את סימון הייבוא. ההעלאה החוזרת נושאת את
      * אותו client_upload_id ולכן נופלת על אותה רשומה בשרת, בלי כפילות.
      */
+    /**
+     * קודם מנסים מהאודיו ששמור בשרת (כל הקלטה חדשה נשמרת שם לפני העיבוד), ורק
+     * אם אין שם אודיו - הקלטות ישנות - נופלים חזרה למקור אצל cally.
+     */
     private fun retryProcessing(item: RecordingItem) {
-        val started = CallImportWorker.retryFromCally(this, item.recordingId)
-        Toast.makeText(
-            this,
-            if (started) R.string.history_retry_started else R.string.history_retry_no_audio,
-            Toast.LENGTH_LONG,
-        ).show()
+        lifecycleScope.launch {
+            val serverStarted = withContext(Dispatchers.IO) { retryRecordingOnServer(item.recordingId) }
+            val started = serverStarted || CallImportWorker.retryFromCally(this@HistoryActivity, item.recordingId)
+            Toast.makeText(
+                this@HistoryActivity,
+                if (started) R.string.history_retry_started else R.string.history_retry_no_audio,
+                Toast.LENGTH_LONG,
+            ).show()
+            if (serverStarted) loadRecordings()
+        }
+    }
+
+    private fun retryRecordingOnServer(recordingId: String): Boolean {
+        val request = Request.Builder()
+            .url("${BuildConfig.BACKEND_BASE_URL}/recordings/$recordingId/retry")
+            .header("X-API-Key", BuildConfig.BACKEND_API_KEY)
+            .post("".toRequestBody())
+            .build()
+        return try {
+            client.newCall(request).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun showDeleteConfirmDialog(item: RecordingItem) {

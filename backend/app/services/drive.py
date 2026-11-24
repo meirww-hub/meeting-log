@@ -94,6 +94,8 @@ TRANSCRIPT_FOLDER = "תמלול"
 TODO_FOLDER = "TO DO"
 AUDIO_FOLDER = "הקלטות"
 AUDIO_FILE_KIND = "הקלטה"
+# האודיו המקורי נשמר כאן מרגע הקבלה ועד שהעיבוד הצליח - ראה pipeline/stash.py.
+STASH_FOLDER = "ממתינות לעיבוד"
 NOTES_FOLDER = "הערות"
 ATTACHMENTS_FOLDER = "קבצים מצורפים"
 
@@ -800,7 +802,9 @@ def _build_todo_spreadsheet(sheets, drive, name: str, todos: list[TodoItem], mee
     return moved
 
 
-def _upload_audio_file(drive, audio_path: str, folder_id: str, name: str) -> dict:
+def _upload_audio_file(
+    drive, audio_path: str, folder_id: str, name: str, share: bool = True
+) -> dict:
     with open(audio_path, "rb") as f:
         media = MediaIoBaseUpload(io.BytesIO(f.read()), mimetype="audio/mpeg", resumable=True)
     metadata = {"name": name, "parents": [folder_id]}
@@ -809,8 +813,23 @@ def _upload_audio_file(drive, audio_path: str, folder_id: str, name: str) -> dic
         .create(body=metadata, media_body=media, fields="id, webViewLink")
         .execute()
     )
-    _share_with_link(drive, file["id"])
+    if share:
+        _share_with_link(drive, file["id"])
     return file
+
+
+def stash_audio(recording_id: str, files: list[tuple[str, str]]) -> list[str]:
+    """שומר את קבצי האודיו המקוריים (נתיב, תווית) בתיקייה הפרטית של הממתינות
+    לעיבוד, ומחזיר את מזהי הקבצים לפי סדר הקלט. הקבצים לא משותפים בקישור.
+    נקרא לפני שהשרת עונה לטלפון שההקלטה התקבלה."""
+    drive = _drive_client()
+    folder_id = _type_folder_id(drive, STASH_FOLDER)
+    ids = []
+    for index, (path, label) in enumerate(files):
+        suffix = f"_{label}" if label else ""
+        name = f"{recording_id}{suffix or ('_' + str(index) if index else '')}.m4a"
+        ids.append(_upload_audio_file(drive, path, folder_id, name, share=False)["id"])
+    return ids
 
 
 def save_meeting_to_drive(
